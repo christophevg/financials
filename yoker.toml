@@ -1,0 +1,6 @@
+[tools.make.allowed_env_vars]
+run = ["CMD", "ARGS"]
+test = ["TEST"]
+
+[tools.write]
+allow_overwrite = true
