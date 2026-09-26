@@ -14,7 +14,6 @@ from pathlib import Path
 
 from financials import config_loader
 
-
 DEFAULT_DATA_DIR = "~/financials-data"
 
 # Generic, non-personal fallback so the tool works without any config file.
@@ -35,6 +34,7 @@ class FinancialsConfig:
   def __post_init__(self):
     if isinstance(self.data_dir, str):
       self.data_dir = Path(self.data_dir)
+
 
 _config: FinancialsConfig | None = None
 

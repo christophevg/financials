@@ -22,7 +22,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from financials.model import APPROVED_CATEGORIES
+from financials.config import approved_categories
 
 _DATE_WORDS = {
   "vandaag": 0,
@@ -58,7 +58,7 @@ class Shorthand:
 
 def _canonical_category(text: str) -> str | None:
   lowered = text.strip().lower()
-  for approved in APPROVED_CATEGORIES:
+  for approved in approved_categories():
     if approved.lower() == lowered:
       return approved
   return None
@@ -102,7 +102,7 @@ def parse_shorthand(text: str) -> Shorthand:
   """Parse a quick-add string. Raises ShorthandError on malformed input."""
   parts = text.strip().split()
   if not parts:
-    raise ShorthandError("lege shorthand — typ bv. \"gisteren -25 Kafe\"")
+    raise ShorthandError('lege shorthand — typ bv. "gisteren -25 Kafe"')
 
   iso_date: str | None = None
   parsed_date = parse_date_token(parts[0])
@@ -135,6 +135,4 @@ def parse_shorthand(text: str) -> Shorthand:
     if canonical is not None:
       category = canonical
       description = tail.strip() or None
-  return Shorthand(
-    date=iso_date, amount=amount, category=category, description=description
-  )
+  return Shorthand(date=iso_date, amount=amount, category=category, description=description)

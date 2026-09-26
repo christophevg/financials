@@ -1,91 +1,184 @@
-"""Unit tests for the financials edit command (day-to-day row editing)."""
+"""Tests: `financials edit` against the journaled ledger (step 6): actual
+edits are one UpdateMutation (id + linked ride along, date moves
+re-insert); expected edits stay in the register; edit-to-today confirms;
+edit-to-future moves via delete + expected add."""
 
-import pytest
+from datetime import date, timedelta
 
-from financials.edit import build_edit_fixes, find_entry
-from financials.model import STATUS_ACTUAL, STATUS_EXPECTED, Transaction
+from financials import edit as module
+from financials.commands import cmd_add
+from financials.journal import Journal, load_ledger
+from financials.model import (
+  STATUS_EXPECTED,
+  Transaction,
+  load_expected,
+  save_expected,
+)
 
 
-def _transaction(**overrides) -> Transaction:
-  base = dict(
-    id="t9002",
-    date="2026-03-15",
+def _journal(tmp_path):
+  return Journal(tmp_path / "journal.jsonl")
+
+
+def _isolate_expected(tmp_path, monkeypatch):
+  expected_path = tmp_path / "expected.json"
+  save_expected([], path=expected_path)
+  monkeypatch.setattr(module, "load_expected", lambda: load_expected(path=expected_path))
+  monkeypatch.setattr(module, "save_expected", lambda rows: save_expected(rows, path=expected_path))
+  return expected_path
+
+
+def _seed(journal):
+  cmd_add("2026-01-01", "Opening", "Inkomsten", 1000.0, journal=journal)
+  _mutation, row = cmd_add("2026-01-05", "Kruidenier", "Eten", -40.0, journal=journal)
+  return row
+
+
+def test_update_moves_date_and_propagates(tmp_path):
+  journal = _journal(tmp_path)
+  row = _seed(journal)
+  _mutation, moved = module.cmd_update(
+    target=row.id,
+    iso_date="2026-01-03",
     description="Kruidenier",
-    category_raw="Eten",
     category="Eten",
+    amount=-40.0,
+    journal=journal,
+  )
+  assert moved is not None
+  assert moved.date.isoformat() == "2026-01-03"
+  assert moved.balances["checking"] == 960.0
+  # tail re-derived: nothing between the opening and the moved row now
+  dates = [t.date.isoformat() for t in load_ledger(journal).transactions]
+  assert dates == ["2026-01-01", "2026-01-03"]
+
+
+def test_update_unknown_target_returns_none(tmp_path):
+  journal = _journal(tmp_path)
+  _seed(journal)
+  _mutation, moved = module.cmd_update(
+    target="d404",
+    iso_date="2026-01-06",
+    description="ghost",
+    category="Eten",
+    amount=-1.0,
+    journal=journal,
+  )
+  assert moved is None
+
+
+def test_edit_actual_prompts_and_applies(tmp_path, monkeypatch):
+  journal = _journal(tmp_path)
+  row = _seed(journal)
+  # _collect_changes prompts 3x via Prompt.ask (Datum/Omschrijving/Bedrag,
+  # each with a default) — the category prompt is separately patched.
+  # Answer in sequence regardless of defaults.
+  answers = iter(["2026-01-06", "Kruidenier Zaterdag", "Eten", "-45.00"])
+  monkeypatch.setattr(module.Prompt, "ask", lambda *a, **k: next(answers))
+  monkeypatch.setattr(module, "ask_category", lambda current="", allow_blank=False: current)
+  projected = Transaction(
+    id=row.id,
+    date=row.date.isoformat(),
+    description=row.description,
+    category_raw=row.category,
+    category=row.category,
     subcategory_raw="",
     subcategory="",
-    amount_eur=-40.0,
-    status=STATUS_ACTUAL,
+    amount_eur=row.postings.get("checking"),
+    status="actual",
     linked_id="",
-    balance_checking=1234.56,
-    balance_savings=6543.21,
   )
-  base.update(overrides)
-  return Transaction(**base)
+  code = module._edit_actual(projected)
+  assert code == 0
+  ledger = load_ledger(journal)
+  updated = ledger.find(row.id)[0]
+  assert updated is not None
+  assert updated.description == "Kruidenier Zaterdag"
 
 
-def test_build_no_changes_returns_empty():
-  assert build_edit_fixes(_transaction(), {}) == []
-
-
-def test_build_amount_change_appends_rebase():
-  fixes = build_edit_fixes(_transaction(), {"amount_eur": -45.0})
-  assert [f["field"] for f in fixes if "field" in f] == ["amount_eur"]
-  assert fixes[-1]["op"] == "rebase_checking"
-  assert all(f.get("op") != "sort_by_date" for f in fixes)
-
-
-def test_global_ops_carry_id_all():
-  """rebase_checking/sort_by_date are global ops — apply_fixes only routes
-  them when id=="all" (regression: missing id crashed id-resolution)."""
-  fixes = build_edit_fixes(_transaction(), {"amount_eur": -45.0, "date": "2026-03-14"})
-  global_ops = [f for f in fixes if "op" in f]
-  assert all(f["id"] == "all" for f in global_ops)
-
-
-def test_build_date_change_appends_sort_and_rebase():
-  fixes = build_edit_fixes(_transaction(), {"date": "2026-03-14"})
-  assert [f.get("op") for f in fixes if "op" in f] == ["sort_by_date", "rebase_checking"]
-
-
-def test_build_field_ops_carry_from_guard():
-  fixes = build_edit_fixes(
-    _transaction(), {"description": "Bakker", "amount_eur": -27.50}
+def test_edit_expected_in_register(tmp_path, monkeypatch):
+  journal = _journal(tmp_path)
+  _seed(journal)
+  expected_path = _isolate_expected(tmp_path, monkeypatch)
+  save_expected(
+    [
+      Transaction(
+        id="e0001",
+        date=(date.today() + timedelta(days=10)).isoformat(),
+        description="Cadeau",
+        category_raw="Uitgaven",
+        category="Uitgaven",
+        subcategory_raw="",
+        subcategory="",
+        amount_eur=-50.0,
+        status=STATUS_EXPECTED,
+        linked_id="",
+      )
+    ],
+    path=expected_path,
   )
-  by_field = {f["field"]: f for f in fixes if "field" in f}
-  assert by_field["description"]["from"] == "Kruidenier"
-  assert by_field["amount_eur"]["from"] == -40.0
-  assert by_field["amount_eur"]["to"] == -27.50
+  entry = load_expected(path=expected_path)[0]
+  monkeypatch.setattr(module.Prompt, "ask", lambda *a, **k: k.get("default", ""))
+  monkeypatch.setattr(module, "ask_category", lambda current="", allow_blank=False: current)
+  changes = module._collect_changes(entry, actual=False)
+  assert changes is not None
+  code = module._edit_expected(entry)
+  assert code == 0
+  expected = load_expected(path=expected_path)
+  assert expected[0].id == "e0001"  # unchanged (all-Enter, future date)
 
 
-def test_build_overdracht_amount_change_refused():
-  with pytest.raises(ValueError):
-    build_edit_fixes(_transaction(category="Overdracht"), {"amount_eur": -45.0})
+def test_find_entry_prefix_scoping_preserved():
+  """The documented id contract survives the model slim-down: e-ids
+  resolve only in the expected list, t/other ids only in the given list."""
+  actual = [
+    Transaction(
+      id="t0001",
+      date="2026-01-01",
+      description="x",
+      category_raw="Eten",
+      category="Eten",
+      subcategory_raw="",
+      subcategory="",
+      amount_eur=-1.0,
+      status="actual",
+      linked_id="",
+    )
+  ]
+  expected = [
+    Transaction(
+      id="e0001",
+      date="2026-02-01",
+      description="y",
+      category_raw="Uitgaven",
+      category="Uitgaven",
+      subcategory_raw="",
+      subcategory="",
+      amount_eur=-2.0,
+      status=STATUS_EXPECTED,
+      linked_id="",
+    )
+  ]
+  from financials.model import find_entry
+
+  assert find_entry("e0001", actual, expected).id == "e0001"
+  assert find_entry("t0001", actual, expected).id == "t0001"
+  assert find_entry("e0002", actual, expected) is None
 
 
-def test_build_overdracht_non_amount_change_allowed():
-  fixes = build_edit_fixes(
-    _transaction(category="Overdracht"), {"description": "Spaaropname"}
-  )
-  assert fixes[0]["to"] == "Spaaropname"
+# --- amount prompts: 0 as an expected placeholder ---------------------------
 
 
-def test_build_edit_fixes_shape():
-  fixes = build_edit_fixes(
-    _transaction(), {"amount_eur": -27.50, "description": "Bakker"}
-  )
-  ops = [f.get("field", f.get("op")) for f in fixes]
-  assert ops == ["amount_eur", "description", "rebase_checking"]
-  amounts = [f for f in fixes if f.get("field") == "amount_eur"]
-  assert amounts[0]["to"] == -27.50
+def test_ask_amount_expected_allows_zero(monkeypatch):
+  """Expected rows: typing 0 is the placeholder flow — reserve the entry,
+  fill in the real amount when it lands."""
+  monkeypatch.setattr(module.Prompt, "ask", lambda *a, **k: "0")
+  assert module._ask_amount(-50.0, allow_zero=True) == 0.0
 
 
-def test_find_entry_resolves_both_stores():
-  actual = _transaction()
-  expected = _transaction(
-    id="e9007", status="expected", balance_checking=None, balance_savings=None
-  )
-  assert find_entry("t9002", [actual], [expected]) is actual
-  assert find_entry("e9007", [actual], [expected]) is expected
-  assert find_entry("t9999", [actual], [expected]) is None
+def test_ask_amount_actual_still_rejects_zero(monkeypatch, capsys):
+  """Actual rows: a committed 0,00 actual stays meaningless — 0 is refused
+  unless the current value is already 0."""
+  monkeypatch.setattr(module.Prompt, "ask", lambda *a, **k: "0")
+  assert module._ask_amount(-50.0) is None
+  assert "niet toegelaten" in capsys.readouterr().out

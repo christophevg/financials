@@ -7,10 +7,10 @@ rich prompt with silent validation — no category dump in the prompt.
 
 from __future__ import annotations
 
-from financials.model import APPROVED_CATEGORIES
-
 from rich.console import Console
 from rich.prompt import Prompt
+
+from financials.config import approved_categories
 
 console = Console()
 
@@ -20,7 +20,7 @@ ABORT = "\x03"  # sentinel: user aborted (q / Esc / Ctrl-C)
 
 def _sorted_categories() -> list[str]:
   """Config-driven, call-time category list (config can change at runtime)."""
-  return sorted(APPROVED_CATEGORIES)
+  return sorted(approved_categories())
 
 
 def _ask_questionary(current: str, allow_blank: bool) -> str | None:
@@ -34,7 +34,7 @@ def _ask_questionary(current: str, allow_blank: bool) -> str | None:
   answer = questionary.select(
     "Categorie",
     choices=choices,
-    default=current if current in APPROVED_CATEGORIES else sorted_categories[0],
+    default=current if current in approved_categories() else sorted_categories[0],
     use_search_filter=True,
     # j/k vim-navigation conflicts with type-to-prefix-filter (questionary
     # raises ValueError) — arrows remain the navigation, typing filters.
@@ -55,7 +55,7 @@ def _ask_rich(current: str, allow_blank: bool) -> str | None:
         return ""
       console.print("[red]Categorie mag niet leeg zijn.[/red]")
       continue
-    if text in APPROVED_CATEGORIES:
+    if text in approved_categories():
       return text
     console.print(f"[red]Categorie {text!r} is niet goedgekeurd.[/red]")
   return None

@@ -12,9 +12,21 @@ DATE_RE = re.compile(
 )
 
 MONTHS = {
-  "jan": 1, "feb": 2, "mrt": 3, "mar": 3, "apr": 4, "mei": 5, "may": 5,
-  "jun": 6, "jul": 7, "aug": 8, "sep": 9, "okt": 10, "oct": 10,
-  "nov": 11, "dec": 12,
+  "jan": 1,
+  "feb": 2,
+  "mrt": 3,
+  "mar": 3,
+  "apr": 4,
+  "mei": 5,
+  "may": 5,
+  "jun": 6,
+  "jul": 7,
+  "aug": 8,
+  "sep": 9,
+  "okt": 10,
+  "oct": 10,
+  "nov": 11,
+  "dec": 12,
 }
 
 AMOUNT_RE = re.compile(r"^(?P<sign>-?)€ (?P<digits>[\d.,]+)$")
@@ -82,9 +94,7 @@ def check_weekday(text: str) -> str:
   if month is None:
     return "unparsable month"
   try:
-    actual = datetime.date(
-      int(match.group("year")), month, int(match.group("day"))
-    ).strftime("%a")
+    actual = datetime.date(int(match.group("year")), month, int(match.group("day"))).strftime("%a")
   except ValueError:
     return "invalid calendar date"
   recorded = match.group("wd").capitalize()

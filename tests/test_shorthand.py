@@ -110,10 +110,6 @@ def test_iso_date_passthrough():
 def test_date_token_words():
   assert parse_date_token("vandaag") == _today()
   assert parse_date_token("morgen") == (date.today() + timedelta(days=1)).isoformat()
-  assert parse_date_token("overmorgen") == (
-    date.today() + timedelta(days=2)
-  ).isoformat()
-  assert parse_date_token("eergisteren") == (
-    date.today() - timedelta(days=2)
-  ).isoformat()
+  assert parse_date_token("overmorgen") == (date.today() + timedelta(days=2)).isoformat()
+  assert parse_date_token("eergisteren") == (date.today() - timedelta(days=2)).isoformat()
   assert parse_date_token("Kafe") is None

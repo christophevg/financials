@@ -1,10 +1,13 @@
 # financials
 
-Personal cashflow management: import, cleanup, visualize, and forecast a
-manually maintained cashflow export (`cashflow.tsv`).
+Personal cashflow management: journal, visualize, and forecast a
+manually maintained ledger — a durable event journal (with per-row
+content-hash ids) plus a ledger checkpoint, seeded from a
+one-time bootstrap of the historical `cashflow.tsv`.
 
-The tool keeps an auditable, mechanical pipeline: raw bank-export rows are
-normalized once, every later change is a reviewed, journaled fix, and the
+The tool keeps an auditable, mechanical pipeline: the committed rows live
+in the event journal, every later change is a journaled mutation
+(add/confirm/update/delete, each rehash-verified), and the
 forecast is built only from explicit, human-approved inputs (future entries
 and recurring rules) — never from statistical guesswork.
 
@@ -12,7 +15,6 @@ and recurring rules) — never from statistical guesswork.
 
 | Command | Purpose |
 |---------|---------|
-| `financials import [--force]` | Normalize `cashflow.tsv` into `transactions.json` (dates → ISO, Dutch euro amounts, balance replay, anomaly flags). Refuses to overwrite an existing store unless `--force`. |
 | `financials fix --file F` / `--all` | Apply reviewed cleanup-fix files (JSON or TOML, `cleanup_fixes*`), oldest first; every application is recorded to an append-only journal. |
 | `financials add` | Add a transaction — interactive, fully flagged, or shorthand (see below). Future-dated entries go to the expected register automatically. |
 | `financials expect` | Manage one-off future entries (`--date --description --category --amount`, `--list`, `--remove=<id>`). |

@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from typing import TypeVar
 
-from financials import config as _config_module
-
 T = TypeVar("T")
 
 

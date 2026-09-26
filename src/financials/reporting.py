@@ -8,12 +8,13 @@ rows is shown as context.
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import Literal
 
 from rich import box
 from rich.console import Console
 from rich.table import Table
 
-from financials.model import STATUS_ACTUAL, load_transactions
+from financials.model import STATUS_ACTUAL
 
 console = Console()
 
@@ -24,7 +25,7 @@ BAR_WIDTH = 36
 def _fmt(value: float, decimals: int = 2) -> str:
   """Dutch-style number formatting: 1.234,56."""
   text = f"{value:,.{decimals}f}"
-  return text.translate(str.maketrans({",": ".", ".": ","}))
+  return text.translate(str.maketrans(",.", ".,", ""))
 
 
 def _month_key(iso: str) -> str:
@@ -51,15 +52,11 @@ def _bar(value: float, scale: float) -> str:
   return "█" * width
 
 
-def _select(
-  transactions: list, months: int | None, year: int | None
-) -> list:
+def _select(transactions: list, months: int | None, year: int | None) -> list:
   """Actual, dated, non-summary rows, optionally scoped to the last N months
   or a specific year."""
   rows = [
-    t
-    for t in transactions
-    if t.status == STATUS_ACTUAL and t.date and "summary row" not in t.note
+    t for t in transactions if t.status == STATUS_ACTUAL and t.date and "summary row" not in t.note
   ]
   if year is not None:
     rows = [t for t in rows if t.date.startswith(f"{year}-")]
@@ -103,7 +100,7 @@ def _aggregate_monthly(rows: list) -> list[dict]:
 
 def _print_monthly(agg: list[dict]) -> None:
   table = Table(title="Maandelijks overzicht (zonder Overdracht)", box=box.SIMPLE)
-  for column, justify in [
+  columns: list[tuple[str, Literal["left", "right"]]] = [
     ("Maand", "left"),
     ("Inkomsten", "right"),
     ("Uitgaven", "right"),
@@ -111,7 +108,8 @@ def _print_monthly(agg: list[dict]) -> None:
     ("#", "right"),
     ("Eind checking", "right"),
     ("Eind spaar", "right"),
-  ]:
+  ]
+  for column, justify in columns:
     table.add_column(column, justify=justify)
   for row in agg:
     checking = _fmt(row["checking"]) if row["checking"] is not None else "—"
@@ -147,14 +145,15 @@ def _category_table(rows: list, sign: int, title: str, top: int) -> None:
     title=title,
     box=box.SIMPLE,
   )
-  for column, justify in [
+  columns: list[tuple[str, Literal["left", "right"]]] = [
     ("Categorie", "left"),
     ("Totaal", "right"),
     ("#", "right"),
     ("Gemiddeld", "right"),
     ("Aandeel", "right"),
     ("", "left"),
-  ]:
+  ]
+  for column, justify in columns:
     table.add_column(column, justify=justify)
   for category, total in ranked:
     table.add_row(
@@ -176,7 +175,14 @@ def _balance_curve(agg: list[dict], months: int | None) -> None:
   scale_c = max((abs(v) for v in checkings), default=1.0)
   scale_s = max((abs(v) for v in savings_list), default=1.0)
   table = Table(title="Saldo-verloop (maandeindstanden)", box=box.SIMPLE)
-  for column, justify in [("Maand", "left"), ("Checking", "left"), ("€", "right"), ("Spaar", "left"), ("€", "right")]:
+  columns: list[tuple[str, Literal["left", "right"]]] = [
+    ("Maand", "left"),
+    ("Checking", "left"),
+    ("€", "right"),
+    ("Spaar", "left"),
+    ("€", "right"),
+  ]
+  for column, justify in columns:
     table.add_column(column, justify=justify)
   for row in show:
     checking = row["checking"]
@@ -199,7 +205,9 @@ def print_report(transactions: list, months: int | None, year: int | None, top: 
   scope = year if year is not None else f"laatste {months} maanden" if months else "hele periode"
   console.print(f"[bold]Periode: {rows[0].date} → {rows[-1].date}[/bold] [dim]({scope})[/dim]")
   pending = sum(1 for t in transactions if t.status != STATUS_ACTUAL)
-  console.print(f"[dim]{len(rows)} actuele transacties; {pending} verwachte (toekomstige) rijen.[/dim]")
+  console.print(
+    f"[dim]{len(rows)} actuele transacties; {pending} verwachte (toekomstige) rijen.[/dim]"
+  )
   console.print()
   _print_monthly(_aggregate_monthly(rows))
   console.print()

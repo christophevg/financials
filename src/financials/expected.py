@@ -11,8 +11,8 @@ from datetime import date
 
 from rich.console import Console
 
+from financials.config import approved_categories
 from financials.model import (
-  APPROVED_CATEGORIES,
   STATUS_EXPECTED,
   Transaction,
   load_expected,
@@ -28,6 +28,29 @@ def _next_id(expected: list[Transaction]) -> str:
     if t.id.startswith("e") and t.id[1:].isdigit():
       highest = max(highest, int(t.id[1:]))
   return f"e{highest + 1:04d}"
+
+
+def add_expected_row_from_fix(fix: dict) -> str:
+  """(Re-)create a one-off expected entry from a fix file's own fields
+  (fix-file op add_expected_row). Returns the new entry's id."""
+  entry = Transaction(
+    id=_next_id(load_expected()),
+    date=fix["date"],
+    description=fix["description"],
+    category_raw=fix["category"],
+    category=fix["category"],
+    subcategory_raw="",
+    subcategory="",
+    amount_eur=fix["amount_eur"],
+    status=STATUS_EXPECTED,
+    linked_id="",
+    source_line=fix.get("source_line", 0),
+    note=fix.get("note", ""),
+  )
+  expected = load_expected()
+  expected.append(entry)
+  save_expected(expected)
+  return entry.id
 
 
 def add_expected(
@@ -47,11 +70,11 @@ def add_expected(
   if not description.strip():
     console.print("[red]Niet opgeslagen: omschrijving mag niet leeg zijn.[/red]")
     return 2
-  if category not in APPROVED_CATEGORIES:
+  if category not in approved_categories():
     console.print(f"[red]Niet opgeslagen: categorie {category!r} is niet goedgekeurd.[/red]")
     return 2
-  if amount == 0:
-    console.print("[red]Niet opgeslagen: bedrag 0 is niet toegelaten.[/red]")
+  if amount is None:
+    console.print("[red]Niet opgeslagen: bedrag ontbreekt.[/red]")
     return 2
   if iso_date <= date.today().isoformat():
     console.print(

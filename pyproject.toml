@@ -12,6 +12,8 @@ dependencies = [
 [dependency-groups]
 dev = [
   "pytest>=8.0.0",
+  "ruff>=0.6",
+  "mypy>=1.11",
 ]
 
 [project.scripts]
@@ -26,3 +28,15 @@ packages = ["src/financials"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+indent-width = 2
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+ignore_missing_imports = true
+check_untyped_defs = true

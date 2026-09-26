@@ -5,16 +5,12 @@ from pathlib import Path
 
 from rich.console import Console
 
+from financials.delete import delete_transaction
 from financials.edit import edit_transaction
 from financials.entry import add_transaction
 from financials.expected import add_expected, list_expected, remove_expected
 from financials.fixes import apply_all_pending, apply_fixes
-from financials.importer import run_import
-from financials.ledger import print_ledger
-from financials.model import load_transactions
 from financials.reporting import print_report
-
-from financials.delete import delete_transaction
 
 console = Console()
 
@@ -22,19 +18,9 @@ console = Console()
 def main() -> None:
   parser = argparse.ArgumentParser(
     prog="financials",
-    description="Personal cashflow management: import, cleanup, visualize, forecast",
+    description="Personal cashflow management: journaled ledger, visualize, forecast",
   )
   sub = parser.add_subparsers(dest="command", required=True)
-
-  import_parser = sub.add_parser(
-    "import",
-    help="Import cashflow.tsv into data/transactions.json (mechanical normalization only).",
-  )
-  import_parser.add_argument(
-    "--force",
-    action="store_true",
-    help="Overwrite data/transactions.json even if it already exists.",
-  )
 
   fix_parser = sub.add_parser(
     "fix",
@@ -77,9 +63,9 @@ def main() -> None:
   add_parser = sub.add_parser(
     "add",
     help=(
-      'Add a transaction: bare (interactive), fully flagged, or shorthand '
+      "Add a transaction: bare (interactive), fully flagged, or shorthand "
       'like add "gisteren -25 Kafe" (missing fields are prompted). '
-      'A future date is stored in the expected register automatically.'
+      "A future date is stored in the expected register automatically."
     ),
   )
   add_parser.add_argument("--date", default=None, help="ISO date (YYYY-MM-DD)")
@@ -108,7 +94,7 @@ def main() -> None:
     default=None,
     metavar="SHORTHAND",
     help='Quick-add: "[date] [amount] [Category:]description" '
-    '(date: ISO / vandaag / gisteren / morgen / -3d).',
+    "(date: ISO / vandaag / gisteren / morgen / -3d).",
   )
 
   expect_parser = sub.add_parser(
@@ -119,9 +105,7 @@ def main() -> None:
   expect_parser.add_argument("--description", default=None)
   expect_parser.add_argument("--category", default=None)
   expect_parser.add_argument("--amount", type=float, default=None)
-  expect_parser.add_argument(
-    "--list", action="store_true", help="List all expected entries."
-  )
+  expect_parser.add_argument("--list", action="store_true", help="List all expected entries.")
   expect_parser.add_argument(
     "--remove", metavar="ID", default=None, help="Remove an expected entry by id."
   )
@@ -140,7 +124,10 @@ def main() -> None:
 
   delete_parser = sub.add_parser(
     "delete",
-    help="Delete a transaction (t####) or expected entry (e####), with confirmation.",
+    help=(
+      "Delete a transaction (t####), expected entry (e####) or rule"
+      " instance (r:... = suppress), with confirmation."
+    ),
   )
   delete_parser.add_argument(
     "id",
@@ -160,12 +147,46 @@ def main() -> None:
   list_parser.add_argument(
     "--project", type=int, default=30, help="Projection window in days (default 30)."
   )
+  list_parser.add_argument(
+    "--filter",
+    default=None,
+    help="Only show rows whose description, category or id contains this (case-insensitive).",
+  )
+
+  recurrence_parser = sub.add_parser(
+    "recurrence",
+    help="Manage recurring rules (the forecast's repeating entries).",
+  )
+  recurrence_parser.add_argument(
+    "action",
+    nargs="?",
+    default=None,
+    metavar="ACTION",
+    help="list | add | pause | resume | remove | detect (default: list)",
+  )
+  recurrence_parser.add_argument("prefix", nargs="?", default=None, metavar="PREFIX")
+  recurrence_parser.add_argument("--description", default=None)
+  recurrence_parser.add_argument("--category", default=None)
+  recurrence_parser.add_argument("--amount", type=float, default=None)
+  recurrence_parser.add_argument(
+    "--frequency", default=None, help="monthly | yearly (add)"
+  )
+  recurrence_parser.add_argument("--day", type=int, default=None, help="day of month (1..31)")
+  recurrence_parser.add_argument("--month", type=int, default=None, help="month for yearly (1..12)")
+  recurrence_parser.add_argument("--start", default=None, help="ISO date; instances from this date")
+  recurrence_parser.add_argument("--end", default="", help="ISO date; last instance (optional)")
+  recurrence_parser.add_argument(
+    "--weekday", default=None, help="weekly/biweekly: ma|di|wo|do|vr|za|zo (anchor weekday)"
+  )
+  recurrence_parser.add_argument("--min", type=int, default=3, help="detect: min occurrences")
+  recurrence_parser.add_argument("--take", type=int, default=None, help="detect: adopt proposal N")
+  recurrence_parser.add_argument(
+    "--occurrence", default=None, help="edit: instance id (r:-hash) for the occurrence path"
+  )
 
   args = parser.parse_args()
 
-  if args.command == "import":
-    run_import(force=args.force)
-  elif args.command == "fix":
+  if args.command == "fix":
     if args.all:
       apply_all_pending()
     elif args.file:
@@ -173,7 +194,9 @@ def main() -> None:
     else:
       parser.error("nothing to apply: use --file <fixes-file> or --all")
   elif args.command == "report":
-    print_report(load_transactions(), args.months, args.year, args.top)
+    from financials.ledger_view import view_rows
+
+    print_report(view_rows(), args.months, args.year, args.top)
   elif args.command == "add":
     try:
       raise SystemExit(
@@ -188,9 +211,8 @@ def main() -> None:
         )
       )
     except KeyboardInterrupt:
-      raise SystemExit(
-        console.print("[yellow]Geannuleerd (Ctrl-C) — niets opgeslagen.[/yellow]")
-      )
+      console.print("[yellow]Geannuleerd (Ctrl-C) — niets opgeslagen.[/yellow]")
+      raise SystemExit(0) from None
   elif args.command == "expect":
     if args.list:
       raise SystemExit(list_expected())
@@ -208,18 +230,56 @@ def main() -> None:
     try:
       raise SystemExit(edit_transaction(args.id))
     except KeyboardInterrupt:
-      raise SystemExit(
-        console.print("[yellow]Geannuleerd (Ctrl-C).[/yellow]")
-      )
+      console.print("[yellow]Geannuleerd (Ctrl-C).[/yellow]")
+      raise SystemExit(0) from None
   elif args.command == "delete":
     try:
       raise SystemExit(delete_transaction(args.id))
     except KeyboardInterrupt:
-      raise SystemExit(
-        console.print("[yellow]Geannuleerd (Ctrl-C).[/yellow]")
-      )
+      console.print("[yellow]Geannuleerd (Ctrl-C).[/yellow]")
+      raise SystemExit(0) from None
   elif args.command == "list":
-    print_ledger(days=args.days, project=args.project)
+    from financials.ledger_view import print_ledger_view
+
+    print_ledger_view(days=args.days, project=args.project, filter=args.filter)
+  elif args.command == "recurrence":
+    from financials import recurrence_cli
+
+    action = args.action or "list"
+    if action == "list":
+      raise SystemExit(recurrence_cli.list_recurrences())
+    elif action == "add":
+      raise SystemExit(
+        recurrence_cli.add_recurrence(
+          description=args.description,
+          category=args.category,
+          amount=args.amount,
+          frequency=args.frequency,
+          day=args.day,
+          month=args.month,
+          start=args.start,
+          end=args.end,
+          weekday=args.weekday,
+        )
+      )
+    elif action == "pause":
+      raise SystemExit(recurrence_cli.pause_recurrence(args.prefix or ""))
+    elif action == "resume":
+      raise SystemExit(recurrence_cli.resume_recurrence(args.prefix or ""))
+    elif action == "remove":
+      raise SystemExit(recurrence_cli.remove_recurrence(args.prefix or ""))
+    elif action == "edit":
+      if args.occurrence:
+        raise SystemExit(recurrence_cli.edit_occurrence(args.occurrence))
+      raise SystemExit(recurrence_cli.edit_recurrence(args.prefix or ""))
+    elif action == "detect":
+      if args.take is not None:
+        raise SystemExit(recurrence_cli.take_proposal(args.take, min_occurrences=args.min))
+      raise SystemExit(recurrence_cli.detect_recurrences(min_occurrences=args.min))
+    else:
+      recurrence_parser.error(
+        f"unknown action {action!r} — use list | add | pause | resume | remove | detect"
+      )
 
 
 if __name__ == "__main__":
