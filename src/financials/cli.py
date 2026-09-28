@@ -172,7 +172,7 @@ def main() -> None:
     nargs="?",
     default=None,
     metavar="GROUP",
-    help="Group id (g#### or unique prefix).",
+    help="Group id (g#### or unique prefix); for `create`, the group's name.",
   )
   group_parser.add_argument(
     "member_id",
@@ -317,7 +317,7 @@ def main() -> None:
     elif action == "create":
       raise SystemExit(
         groups_cli.create_group(
-          label=None,
+          label=args.group_id,
           date_text=args.date,
           category=args.category,
           note=args.note,

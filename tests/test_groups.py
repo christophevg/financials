@@ -11,6 +11,8 @@ patches here — no real store is ever touched.
 
 from datetime import date, timedelta
 
+import pytest
+
 from financials import confirm as module
 from financials import groups as groups_mod
 from financials.commands import cmd_add
@@ -191,6 +193,25 @@ def test_create_and_add_and_remove(tmp_path, monkeypatch):
   assert load_groups()[0].members == []
   # the member row itself survives
   assert len(load_expected()) == 1
+
+
+def test_cli_create_passes_label_no_prompt(tmp_path, monkeypatch, capsys):
+  """Regression (owner report, 2026-09-28): `group create "Naam" --date …`
+  must not prompt for the name — the positional IS the label."""
+  _isolate(tmp_path, monkeypatch)
+  # Any prompt would fail the test: _ask reads stdin, which pytest capsys
+  # leaves at EOF.
+  from financials import cli as cli_mod
+
+  argv = ["group", "create", "Mastercard september", "--date", "2026-09-28"]
+  monkeypatch.setattr("sys.argv", ["financials", *argv])
+  with pytest.raises(SystemExit) as excinfo:
+    cli_mod.main()
+  assert excinfo.value.code == 0
+  groups = load_groups()
+  assert len(groups) == 1
+  assert groups[0].label == "Mastercard september"
+  assert groups[0].date == "2026-09-28"
 
 
 def test_add_unknown_member_refused(tmp_path, monkeypatch):
