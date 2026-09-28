@@ -19,7 +19,8 @@ and recurring rules) — never from statistical guesswork.
 | `financials add` | Add a transaction — interactive, fully flagged, or shorthand (see below). Future-dated entries go to the expected register automatically. |
 | `financials expect` | Manage one-off future entries (`--date --description --category --amount`, `--list`, `--remove=<id>`). |
 | `financials edit [ID]` / `financials delete [ID]` | Edit or delete a transaction (`t####`) or expected entry (`e####`), with confirmation; changes are replay-checked and journaled. |
-| `financials confirm [ID]` | Confirm an open entry in one go: a landed expected entry (`e####`) or rule instance (`r:...`) commits as-is, zero prompts (the fast path; `edit <id>` is the adjust path). Bare `confirm` shows the OPEN section to pick from. |
+| `financials confirm [ID]` | Confirm an open entry in one go: a landed expected entry (`e####`) or rule instance (`r:...`) commits as-is, zero prompts (the fast path; `edit <id>` is the adjust path). A group id (`g####`) confirms all landed members in one go. Bare `confirm` shows the OPEN section to pick from. |
+| `financials group ...` | Group rows into one virtual rollup row (credit-card statements): `list`, `show <g>`, `create`, `add <g> <id>`, `remove <g> <id>`, `edit <g>`, `delete <g>`. The view shows the rollup (`⧉ <name>`) with the member total at the rollup date; members keep their ids and are never modified by grouping. |
 | `financials list --days X --project Y` | Ledger view: actuals of the last X days + projection of the next Y days (expected one-offs + recurring-rule expansions, superseded per period by real entries). |
 | `financials report [--months N] [--year Y] [--top N]` | Visual report: monthly flows, category breakdown, balance curve. |
 
@@ -46,9 +47,8 @@ Personal configuration lives outside the repo:
 
 The repo carries only generic defaults (categories *Inkomsten*/*Uitgaven*,
 data in `~/financials-data`), so it runs anywhere without leaking personal
-data. All data stores (`transactions.json`, `expected.json`,
-`recurrences.json`, `journal.jsonl`, `cleanup_fixes*`) live under the
-configured `data_dir`.
+data. All data stores (`expected.json`, `recurrences.json`, `groups.json`,
+`journal.jsonl`, `cleanup_fixes*`) live under the configured `data_dir`.
 
 ## Development
 

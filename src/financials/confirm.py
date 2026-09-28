@@ -35,22 +35,16 @@ from financials.model import Transaction, find_entry, load_expected, save_expect
 console = Console()
 
 
-def _confirm_expected(t: Transaction) -> int:
-  """Zero-prompt confirm of a landed expected row: the same ConfirmMutation
-  path as edit's all-Enter confirm (cmd_add with retires), then the e-row
-  is dropped — only after the confirm applied."""
+def _commit_expected(t: Transaction):
+  """The commit core of _confirm_expected: the ConfirmMutation path (the
+  e-row retires and the actual lands in one mutation), then the e-row is
+  dropped — only after the confirm applied. Returns the committed entry
+  (with its new hash id) or None (nothing applied; amount-less rows are
+  refused upstream)."""
   from financials.commands import cmd_add, command_journal
 
-  if t.date > date.today().isoformat():
-    console.print(
-      f"[yellow]{t.id} is nog toekomst ({t.date}) — niets bevestigd. "
-      "Aanpassen kan met 'financials edit'.[/yellow]"
-    )
-    return 2
   if t.amount_eur is None:
-    console.print("[red]Deze rij heeft geen bedrag om te bevestigen.[/red]")
-    return 2
-
+    return None
   journal = command_journal()
   _mutation, entry = cmd_add(
     iso_date=t.date,
@@ -61,15 +55,32 @@ def _confirm_expected(t: Transaction) -> int:
     journal=journal,
   )
   if entry is None:
-    console.print("[red]Niet bevestigd: de boeking kon niet worden toegepast.[/red]")
-    return 2
-
+    return None
   expected = load_expected()
   save_expected([x for x in expected if x.id != t.id])
+  return entry
+
+
+def _confirm_expected(t: Transaction) -> int:
+  """Zero-prompt confirm of a landed expected row: the same ConfirmMutation
+  path as edit's all-Enter confirm (cmd_add with retires), then the e-row
+  is dropped — only after the confirm applied."""
+  if t.date > date.today().isoformat():
+    console.print(
+      f"[yellow]{t.id} is nog toekomst ({t.date}) — niets bevestigd. "
+      "Aanpassen kan met 'financials edit'.[/yellow]"
+    )
+    return 2
+  if t.amount_eur is None:
+    console.print("[red]Deze rij heeft geen bedrag om te bevestigen.[/red]")
+    return 2
+  entry = _commit_expected(t)
+  if entry is None:
+    console.print("[red]Niet bevestigd: de boeking kon niet worden toegepast.[/red]")
+    return 2
   balances = entry.balances
   console.print(
-    f"[green]Bevestigd: {t.id} → {entry.id}[/green]  "
-    "[dim]expected entry verwijderd[/dim]"
+    f"[green]Bevestigd: {t.id} → {entry.id}[/green]  [dim]expected entry verwijderd[/dim]"
   )
   console.print(
     f"[dim]checking {balances.get('checking', 0.0):,.2f}, spaar "
@@ -110,6 +121,87 @@ def _confirm_instance(entry_id: str) -> int:
   )
 
 
+def _confirm_group(entry_id: str) -> int:
+  """Zero-prompt confirm of a group's LANDED members, in (date, id)
+  order: e-members commit via the standard expected path (each e#### is
+  re-pointed to its new committed id in the membership list), r-members
+  via the rule-instance path. Future or dangling members are skipped
+  with a note; the group itself survives. Nothing to confirm -> exit 2
+  with a message, a partially-confirmable group -> exit 0 with skips
+  reported."""
+  from financials.groups import find_group, load_groups, resolve_member, save_groups
+
+  groups = load_groups()
+  group = find_group(groups, entry_id)
+  if group is None:
+    console.print(f"[red]Onbekende groep: {entry_id}[/red]")
+    return 2
+  today_iso = date.today().isoformat()
+  landed: list[tuple[str, Transaction]] = []
+  for member_id in group.members:
+    t = resolve_member(member_id)
+    if t is None:
+      console.print(f"[yellow]{member_id} is niet meer resolveerbaar — overgeslagen.[/yellow]")
+      continue
+    if t.date > today_iso:
+      console.print(f"[yellow]{member_id} is nog toekomst ({t.date}) — overgeslagen.[/yellow]")
+      continue
+    if t.status == "actual":
+      console.print(f"[dim]{member_id} is al actual — niets te doen.[/dim]")
+      continue
+    if t.amount_eur is None:
+      console.print(f"[yellow]{member_id} heeft geen bedrag — overgeslagen.[/yellow]")
+      continue
+    landed.append((member_id, t))
+  if not landed:
+    console.print(f"[dim]{group.id}: niets om te bevestigen.[/dim]")
+    return 2
+  # Re-resolve the group from a FRESH load on every save (resolve_member
+  # reboots the journal; the membership file is the mutable state).
+  for member_id, t in sorted(landed, key=lambda pair: (pair[1].date, pair[0])):
+    if t.status == "expected":
+      entry = _commit_expected(t)
+      if entry is not None:
+        groups = load_groups()
+        target = find_group(groups, group.id)
+        if target is not None and member_id in target.members:
+          # The e-row retired into a committed hash id: re-point.
+          target.members = [entry.id or member_id if m == member_id else m for m in target.members]
+          save_groups(groups)
+    else:
+      from financials.commands import command_journal
+      from financials.journal import load_ledger
+      from financials.recurrence_cli import _find_instance, commit_instance
+      from financials.recurrences import AMOUNT_TOLERANCE, DAY_WINDOW
+
+      hit = _find_instance(member_id)
+      if hit is None:
+        continue
+      rule_hit, occurrence_date = hit
+      # A superseded instance (already covered by a real commit) must not
+      # double-commit: same cover criteria as the projection's superseding.
+      covered = any(
+        entry.category == rule_hit.category
+        and entry.postings.get("checking") is not None
+        and abs((entry.postings.get("checking") or 0.0) - rule_hit.amount) <= AMOUNT_TOLERANCE
+        and abs((entry.date - occurrence_date).days) <= DAY_WINDOW
+        for entry in load_ledger(command_journal()).transactions
+      )
+      if covered:
+        console.print(f"[dim]{member_id} is al gedekt door een geboekte rij — overgeslagen.[/dim]")
+        continue
+      commit_instance(
+        rule_hit,
+        occurrence_date,
+        occurrence_date,
+        rule_hit.description,
+        rule_hit.category,
+        rule_hit.amount,
+      )
+  console.print(f"[green]Groep {group.id} bevestigd (voor zover geland).[/green]")
+  return 0
+
+
 def _pick_open() -> str | None:
   """Bare 'confirm': show the OPEN section (landed-but-unconfirmed
   expected rows + rule instances — the confirmation backlog) and ask
@@ -140,11 +232,15 @@ def _pick_open() -> str | None:
 def confirm_transaction(entry_id: str | None = None) -> int:
   """Confirm an open entry in one go: expected (e####) or rule instance
   (r:-hash) as-is, zero prompts. Committed ids are already actual (no-op).
+  A group id (g####) confirms every LANDED member in sequence, re-pointing
+  each e#### to its new committed id so the group survives confirmation.
   Bare confirm shows the OPEN section to pick from."""
   if entry_id is None:
     entry_id = _pick_open()
     if entry_id is None:
       return 2
+  if entry_id.startswith("g") and entry_id[1:].isdigit():
+    return _confirm_group(entry_id)
   if entry_id.startswith("e") and entry_id[1:].isdigit():
     expected = find_entry(entry_id, [], load_expected())
     if expected is None:

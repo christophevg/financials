@@ -45,13 +45,22 @@ tracked files — source, tests, docs, scripts, and commit messages.
 ## Data & configuration (never commit these)
 
 - All stores live under the config-driven `data_dir` (owner's: `~/.financials/data`):
-  `transactions.json` (actuals), `expected.json` (one-off future entries),
-  `recurrences.json` (recurring rules), `journal.jsonl` (append-only audit
-  trail), `cleanup_fixes*` (reviewed fix files, renamed `*.applied` when applied).
+  `journal.jsonl` (append-only audit trail; the committed ledger),
+  `ledger.json` (checkpoint), `expected.json` (one-off future entries),
+  `recurrences.json` (recurring rules), `groups.json` (row rollups),
+  `cleanup_fixes*` (reviewed fix files, renamed `*.applied` when applied).
 - Config: `~/.financials.toml` (user) + `./financials.toml` (project) via
   the clevis cascade; keys: `categories`, `data_dir`. Repo carries generic
   defaults only. `config_loader.load_config` disables the CLI layer.
 - `SESSION.md` is gitignored transient session state.
+- `groups.json` — named rollups of rows (credit-card statements): Group
+  dataclass in `groups.py`, ids `g####`; members resolve across the three
+  id families via `groups.resolve_member`; NOT journaled (organization
+  metadata like rules/expected). The view hides members and shows one
+  `⧉ <label> (n)` rollup at the rollup date (group's own date, else
+  members' max) — uncommitted members re-time the total there; fully
+  committed groups roll up display-only in the actuals window.
+  `confirm <g-id>` multi-confirms landed members and re-points e-ids.
 
 ## Commands
 
@@ -61,11 +70,11 @@ tracked files — source, tests, docs, scripts, and commit messages.
   `make run CMD=<subcommand> ARGS="<flags>"`.
 - `view`, `add`, `delete`, `edit`, `report` are thin wrappers over `run`.
 - CLI: `confirm [ID]` = zero-prompt confirm of open entries (landed
-  `e####` / `r:-hash`; committed `t####` = no-op; bare = OPEN-section
-  picker). Fast path; `edit <id>` stays the adjust path. Core:
-  `src/financials/confirm.py`; rule commits go through
-  `recurrence_cli.commit_instance` (shared with edit's interactive
-  confirm); OPEN rows come from `ledger_view.open_rows`.
+  `e####` / `r:-hash`; committed `t####` = no-op; `g####` = group
+  multi-confirm; bare = OPEN-section picker). Fast path; `edit <id>`
+  stays the adjust path. Core: `src/financials/confirm.py`; rule commits
+  go through `recurrence_cli.commit_instance` (shared with edit's
+  interactive confirm); OPEN rows come from `ledger_view.open_rows`.
 - `yoker.toml` allowlist for the make tool: `run` → `[CMD, ARGS]`,
   `test` → `[TEST]`, `lint` → `[LINT_FLAGS]`. Only these env vars are
   allowed.
@@ -83,9 +92,25 @@ tracked files — source, tests, docs, scripts, and commit messages.
   be idempotent (return "nothing to do" when already applied).
 - Categories come from config (`approved_categories()`); the data-quality
   tests lock data invariants and skip when no data file exists.
+- Every store a flow READS must be isolated in tests (conftest covers
+  journal + expected; groups/recurrences patches are per-test file) —
+  stores resolve at CALL time through the `*_file()` choke points in
+  `model.py`/`fixes.py`, never via module-level imports.
 
 ## Known gaps / next
 
-- `financials recurrence` CLI (add/list/pause/resume) + history-based rule
-  detector are not implemented yet; `recurrences.py` already has
-  load/save/expand/supersede, and `list` already projects rule expansions.
+- `financials recurrence` CLI landed (list/add/pause/resume/remove/edit/
+  detect) long ago; detector quality tuning against the owner's real
+  history is still open.
+- `financials group` CLI landed (list/show/create/add/remove/edit/delete
+  + `confirm <g-id>` + edit/delete g-id resolvers). Open: partially-
+  committed groups show committed members individually (no mixed split
+  rendering yet); `groups.resolve_member`'s last-resort re-derivation of
+  edited-rule instance ids re-expands every active rule per unknown id
+  (fine at this scale, worth a cache if rules grow).
+- Footer hint idea (owner, phase 7): "regels adres je via (prefix van
+  de) omschrijving".
+- Possible follow-ups the owner noted in passing: red for negative
+  Verandering cells + footer "Onder nul" lines (list only today).
+- migration/ dir still holds repair backups (events*.jsonl, *.bak) —
+  owner said "delete in a few days" (as of 09-21).

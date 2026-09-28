@@ -27,6 +27,10 @@ def recurrences_file() -> Path:
   return _store_path("recurrences.json")
 
 
+def groups_file() -> Path:
+  return _store_path("groups.json")
+
+
 STATUS_ACTUAL = "actual"
 STATUS_EXPECTED = "expected"
 

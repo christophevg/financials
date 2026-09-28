@@ -107,6 +107,14 @@ def delete_transaction(entry_id: str | None = None) -> int:
   if entry is None:
     expected = find_entry(entry_id, [], load_expected())
     if expected is None:
+      # resolver: a group (g####) — deleting the GROUP (members survive
+      # untouched; un-group, not delete).
+      from financials.groups import find_group, load_groups
+
+      if find_group(load_groups(), entry_id) is not None:
+        from financials.groups import delete_group
+
+        return delete_group(entry_id)
       # last resolver: a projected rule instance (r:-hash) — deleting it
       # SUPPRESSES the instance (its date joins the rule's exceptions);
       # the rule keeps running for the remaining periods. Resolved FIRST:

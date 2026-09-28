@@ -283,6 +283,14 @@ def edit_transaction(entry_id: str | None = None) -> int:
   if entry is None:
     expected = find_entry(entry_id, [], load_expected())
     if expected is None:
+      # resolver: a group (g####) — the group editor (label/rollup date/
+      # category/note; membership via 'group add/remove').
+      from financials.groups import find_group, load_groups
+
+      if find_group(load_groups(), entry_id) is not None:
+        from financials.groups import edit_group
+
+        return edit_group(entry_id)
       # last resolver: a projected rule instance (r:-hash) — the owner's
       # two-option edit (rule vs occurrence-as-expected-exception).
       # Resolved FIRST: a decline inside the occurrence edit is a cancel,

@@ -153,6 +153,50 @@ def main() -> None:
     help="Expected entry (e####) or rule instance (r:...) from 'financials list'.",
   )
 
+  group_parser = sub.add_parser(
+    "group",
+    help=(
+      "Group rows into one virtual rollup row (credit-card statements):"
+      " list | show | create | add | remove | edit | delete. The view"
+      " shows the rollup with the member total."
+    ),
+  )
+  group_parser.add_argument(
+    "action",
+    nargs="?",
+    default=None,
+    help="list | show | create | add | remove | edit | delete",
+  )
+  group_parser.add_argument(
+    "group_id",
+    nargs="?",
+    default=None,
+    metavar="GROUP",
+    help="Group id (g#### or unique prefix).",
+  )
+  group_parser.add_argument(
+    "member_id",
+    nargs="?",
+    default=None,
+    metavar="ID",
+    help="Row id for add/remove (t####, e####, r:...).",
+  )
+  group_parser.add_argument(
+    "--date",
+    default="",
+    help="create/edit: rollup date (YYYY-MM-DD; empty = last member's date).",
+  )
+  group_parser.add_argument(
+    "--category",
+    default="",
+    help="create: category for the rollup row.",
+  )
+  group_parser.add_argument(
+    "--note",
+    default="",
+    help="create/edit: note for the group.",
+  )
+
   list_parser = sub.add_parser(
     "list",
     help="Ledger: actual transactions of the last X days + projection for Y days.",
@@ -184,9 +228,7 @@ def main() -> None:
   recurrence_parser.add_argument("--description", default=None)
   recurrence_parser.add_argument("--category", default=None)
   recurrence_parser.add_argument("--amount", type=float, default=None)
-  recurrence_parser.add_argument(
-    "--frequency", default=None, help="monthly | yearly (add)"
-  )
+  recurrence_parser.add_argument("--frequency", default=None, help="monthly | yearly (add)")
   recurrence_parser.add_argument("--day", type=int, default=None, help="day of month (1..31)")
   recurrence_parser.add_argument("--month", type=int, default=None, help="month for yearly (1..12)")
   recurrence_parser.add_argument("--start", default=None, help="ISO date; instances from this date")
@@ -262,6 +304,45 @@ def main() -> None:
     except KeyboardInterrupt:
       console.print("[yellow]Geannuleerd (Ctrl-C).[/yellow]")
       raise SystemExit(0) from None
+  elif args.command == "group":
+    from financials import groups as groups_cli
+
+    action = args.action or "list"
+    if action == "list":
+      raise SystemExit(groups_cli.list_groups())
+    elif action == "show":
+      if not args.group_id:
+        group_parser.error("show requires a group id (g####)")
+      raise SystemExit(groups_cli.show_group(args.group_id))
+    elif action == "create":
+      raise SystemExit(
+        groups_cli.create_group(
+          label=None,
+          date_text=args.date,
+          category=args.category,
+          note=args.note,
+        )
+      )
+    elif action == "add":
+      if not args.group_id or not args.member_id:
+        group_parser.error("add requires a group id and a row id")
+      raise SystemExit(groups_cli.add_member(args.group_id, args.member_id))
+    elif action == "remove":
+      if not args.group_id or not args.member_id:
+        group_parser.error("remove requires a group id and a row id")
+      raise SystemExit(groups_cli.remove_member(args.group_id, args.member_id))
+    elif action == "edit":
+      if not args.group_id:
+        group_parser.error("edit requires a group id (g####)")
+      raise SystemExit(groups_cli.edit_group(args.group_id))
+    elif action == "delete":
+      if not args.group_id:
+        group_parser.error("delete requires a group id (g####)")
+      raise SystemExit(groups_cli.delete_group(args.group_id))
+    else:
+      group_parser.error(
+        f"unknown action {action!r} — use list | show | create | add | remove | edit | delete"
+      )
   elif args.command == "list":
     from financials.ledger_view import print_ledger_view
 

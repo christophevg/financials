@@ -165,6 +165,7 @@ def _projection_walk(
   overlay over a horizon of at least the year end (the footer's state_at
   cuts at month/year end; a 1-day `project` keeps the walk lean when the
   consumer only needs the open section) and return (walk, anchor)."""
+  from financials.groups import load_groups
   from financials.model import load_expected
 
   rows = view_rows()
@@ -196,7 +197,38 @@ def _projection_walk(
     window_start,
     horizon,
   )
-  return _walk(projection, start_checking, start_savings), anchor
+  collapsed = _collapse_groups(projection, load_groups())
+  return _walk(collapsed, start_checking, start_savings), anchor
+
+
+def _collapse_groups(
+  projection: list[Transaction],
+  groups,
+) -> list[Transaction]:
+  """Replace each group's UNCOMMITTED member rows with one rollup row at
+  the rollup date (the group's own date when set, else its members' max
+  date): the total hits the balance there — a credit-card statement's
+  purchases land on the payment day, not on the individual purchase
+  days. Committed members never appear in the projection (they render
+  display-only from the actuals table); dangling member ids (dropped
+  expected rows, edited rules) are skipped. The caller walks the
+  collapsed set, so balances are consistent: no member impact before the
+  rollup date, the group total on it."""
+  from financials.groups import group_rollup
+
+  if not any(g.members for g in groups):
+    return projection
+  member_ids = {m for g in groups for m in g.members}
+  kept = [t for t in projection if t.id not in member_ids]
+  rollups: list[Transaction] = []
+  for group in groups:
+    rows = [t for t in projection if t.id in set(group.members)]
+    if not rows:
+      continue  # nothing projected (all committed or all dangling)
+    rollups.append(group_rollup(group, rows))
+  collapsed = kept + rollups
+  collapsed.sort(key=lambda t: (t.date, t.id))
+  return collapsed
 
 
 def open_rows(today: date | None = None) -> list[Transaction]:
@@ -308,6 +340,30 @@ def _render_actual_rows(rows: list[Transaction]) -> list[tuple]:
   ]
 
 
+def _committed_rollups(committed: list[Transaction]):
+  """Display-only rollup rows for groups whose members are all committed:
+  (rollup_row, member_rows). The actuals table shows the single rollup
+  instead of the member rows (the ledger itself is untouched); balances
+  are the last member's (the total has already landed there). Partially
+  committed groups are skipped here: their committed members still show
+  individually while the unconfirmed rest rolls up in OPEN/PROJECTIE."""
+  from financials.groups import group_rollup, load_groups
+
+  out = []
+  for group in load_groups():
+    member_rows = [t for t in committed if t.id in set(group.members)]
+    if not member_rows or len(member_rows) != len(group.members):
+      continue  # empty or partially committed/unresolvable: no historical rollup
+    member_rows.sort(key=lambda t: (t.date, t.id))
+    rollup = group_rollup(group, member_rows)
+    rollup.status = STATUS_ACTUAL
+    rollup.date = max(t.date for t in member_rows)
+    rollup.balance_checking = member_rows[-1].balance_checking
+    rollup.balance_savings = member_rows[-1].balance_savings
+    out.append((rollup, member_rows))
+  return out
+
+
 def print_ledger_view(days: int, project: int, filter: str | None = None) -> None:
   """`financials list`: the committed rows come from the journaled ledger
   (checkpoint + tail replay) and the projection composes over the
@@ -352,6 +408,13 @@ def print_ledger_view(days: int, project: int, filter: str | None = None) -> Non
   committed_shown = [t for t in committed if matches(t)]
   open_rows = [(t, c, s) for t, c, s in open_rows if matches(t)]
   future = [(t, c, s) for t, c, s in future if matches(t)]
+  # Display-only historical rollups: groups whose members are ALL committed
+  # collapse into one row in the actuals window (the ledger is untouched).
+  fully_committed_rollups = _committed_rollups(committed)
+  hidden_committed = {
+    member.id for _rollup, members in fully_committed_rollups for member in members
+  }
+  committed_shown = [t for t in committed_shown if t.id not in hidden_committed]
   console.print(
     f"[bold]Kasboek[/bold] [dim]— journaal-geboekt; actuals: laatste {days} "
     f"dagen · openstaand: geland maar nog niet bevestigd (expected + regels "
@@ -368,14 +431,26 @@ def print_ledger_view(days: int, project: int, filter: str | None = None) -> Non
   table.add_column("Checking", justify="right")
   table.add_column("Spaar", justify="right")
 
-  for r in _render_actual_rows(
-    [
-      t
-      for t in committed_shown
-      if today - timedelta(days=days) <= date.fromisoformat(t.date) <= today
-    ]
-  ):
+  actual_rows = [
+    t
+    for t in committed_shown
+    if today - timedelta(days=days) <= date.fromisoformat(t.date) <= today
+  ]
+  for r in _render_actual_rows(actual_rows):
     table.add_row(r[0], r[1], r[2], r[3], f"{r[4]:+,.2f}", _fmt_balance(r[5]), _fmt_balance(r[6]))
+  for rollup, members in fully_committed_rollups:
+    member_ids = {t.id for t in members}
+    if not any(t.id in member_ids for t in actual_rows):
+      continue
+    table.add_row(
+      rollup.id,
+      rollup.date,
+      rollup.description,
+      rollup.category,
+      f"{rollup.amount_eur:+,.2f}",
+      _fmt_balance(rollup.balance_checking),
+      _fmt_balance(rollup.balance_savings),
+    )
 
   if open_rows:
     table.add_section()
