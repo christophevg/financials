@@ -348,68 +348,79 @@ def test_fold_refuses_corrupt_row(tmp_path):
     fold(path)
 
 
-# --- Live validation: the real bootstrap journal ------------------------
+# --- Fold ≡ checkpoint over the full mutation spectrum ------------------
 
 
-def test_fold_of_real_bootstrap_journal():
-  """Fold the owner's real bootstrap journal through the engine (skipped
-  when the staging file does not exist). The step-1 gate validated the
-  tip with the bootstrap's own file-order fold; this proves the ENGINE's
-  fold — including per-row rehash verification with the engine's hash —
-  agrees on all bootstrap rows: bootstrap-hash scheme == engine-hash
-  scheme (balance values are not stated — see the redaction note).
-  Skips with a pointer to the repair while the journal still carries the
-  four 2026-09-19 writer-bug rows (ids minted before ts was hashed
-  content): run scripts/remint_journal_ids.py, then this test hard-runs."""
-  from financials.config import data_dir
-  from financials.journal import remint
+def test_fold_checkpoint_agreement_full_spectrum(tmp_path):
+  """Self-contained (no live data — the suite never reads a real store):
+  a journal built through the real write path with EVERY mutation op —
+  add, confirm, update, and a delete as the last row — folds and
+  checkpoints in agreement, and the tip is the replay WATERMARK (the
+  last journal row's own content-hash id), which after an add+delete
+  legitimately resolves to no entry. Owner-diagnosed 2026-09-28: the
+  deleted live-data gates asserted `ledger.find(tip) is not None`,
+  true only while the last journal row happened to be an add/confirm —
+  any trailing update/delete breaks it (engine correct, gate wrong)."""
+  from financials.commands import cmd_add, cmd_delete, cmd_update
+  from financials.journal import ConfirmMutation, checkpoint, fold
 
-  path = data_dir() / "journal.jsonl"
-  if not path.exists():
-    pytest.skip("promoted journal not found")
-  if remint(path, dry_run=True):
-    pytest.skip("journal still has stale ids — run scripts/remint_journal_ids.py first")
-  ledger, tip = fold(path)
-  # The bootstrap pinned the milestone row count and balances; the owner
-  # keeps USING the app, so the journal legitimately grows. Invariant-only
-  # since 2026-09-26: every committed row folds, the tip is the last
-  # applied mutation's entry, and both account balances are intact at the
-  # tip (the historical milestone values are not restated in code).
-  assert len(ledger.transactions) >= 1322
-  tip_entry = ledger.find(tip)[0]
-  assert tip_entry is not None
-  assert tip_entry.balances.get("checking") is not None
-  assert tip_entry.balances.get("savings") is not None
+  journal = Journal(tmp_path / "j.jsonl")
+  # Adds go through the real write path (content-hash ids from real
+  # mutations — the same rows a daily user produces; synthetic content).
+  _m1, t1 = cmd_add("2026-01-01", "Salaris", "Inkomsten", 2000.0, journal=journal)
+  _m2, t2 = cmd_add("2026-01-02", "Huur", "Uitgaven", -550.0, journal=journal)
+  _m3, _t3 = cmd_add("2026-01-03", "Terugbetaling", "Inkomsten", 10.0, journal=journal)
+  # The confirm goes through the engine directly (the CLI's confirm path
+  # is interactive; the mutation itself is the unit here).
+  journal.append(
+    ConfirmMutation(
+      date="2026-01-04",
+      description="Salaris",
+      category="Inkomsten",
+      postings={"checking": 2000.0},
+      retires="e9001",
+      ts="2026-01-04T00:00:00",
+    )
+  )
+  cmd_update(t2.id, "2026-01-05", "Huur", "Uitgaven", -575.0, journal=journal)
+  cmd_delete(_t3.id, journal=journal)  # last row: a delete
 
+  ledger, tip = fold(journal)
+  # The tip is the watermark: the DELETE row's own id — NOT an entry
+  # id (the victim's entry was removed by the delete itself).
+  last_row = json.loads(journal.path.read_text().splitlines()[-1])
+  assert tip == last_row["id"]
+  assert ledger.find(tip)[0] is None
+  # The victim is gone; the other entries survive (the confirm landed
+  # its own row — a confirm IS entry-creating; its id is its own hash).
+  landed = [
+    t for t in ledger.transactions if t.id not in (t1.id, t2.id)
+  ]
+  assert len(landed) == 1  # the confirm's landed actual
+  # Date-ordered: t1 (01-01), the landed confirm (01-04), t2 (01-05 —
+  # cmd_update moved it).
+  assert [t.id for t in ledger.transactions] == [
+    t1.id, landed[0].id, t2.id
+  ]
+  # Balances are intact on the LAST ENTRY (not on the tip — the tip
+  # is a journal row, entries are what carry balances). Only checking
+  # is touched here, so savings legitimately never enters the dict
+  # (the deleted live gate asserted savings too — meaningful only on
+  # the bootstrap's both-account seed, not synthetically).
+  last_entry = ledger.transactions[-1]
+  assert last_entry.balances.get("checking") is not None
+  assert set(last_entry.balances) == {"checking"}
 
-def test_checkpoint_agrees_with_fold_on_real_journal(tmp_path):
-  """Step-4 live gate (skips when the staging journal is absent): the
-  persisted checkpoint agrees with the fold — same tip, same balances at
-  the tip, same entry count. Fold == checkpoint, verified on real data;
-  written to tmp so the suite never touches the owner's staging dir."""
-  from financials.config import data_dir
-  from financials.journal import checkpoint, fold
-
-  path = data_dir() / "journal.jsonl"
-  if not path.exists():
-    pytest.skip("promoted journal not found")
-  folded, fold_tip = fold(path)
-  persisted_tip = checkpoint(Journal(path), path=tmp_path / "ledger.json")
-  assert persisted_tip == fold_tip
+  # Fold ≡ checkpoint: same tip, same entries, same balances —
+  # row-by-row (both sides date-ordered).
+  persisted_tip = checkpoint(Journal(journal.path), path=tmp_path / "ledger.json")
+  assert persisted_tip == tip
   persisted = json.loads((tmp_path / "ledger.json").read_text())
-  assert len(persisted["entries"]) == len(folded.transactions)
-  tip_entry = folded.find(fold_tip)[0]
-  assert tip_entry is not None
-  # Invariant-only since 2026-09-26 (the owner's live balances move as
-  # they use the app): the persisted checkpoint agrees with the fold on
-  # the FULL date-ordered ledger — the tip id and every entry's balances,
-  # compared row-by-row. Positional alignment is correct: both sides are
-  # date-ordered (checkpoint entries serialize in date order; fold chains
-  # by date), so a backdated tip row does NOT pair with entries[-1] (the
-  # 2026-09-26 lesson: entries[-1] was a LATER-dated row, the tip was the
-  # backdated confirm — same data, unlike rows, false divergence).
-  assert persisted["tip"] == fold_tip
-  for persisted_row, folded_row in zip(persisted["entries"], folded.transactions, strict=True):
+  assert persisted["tip"] == tip
+  assert len(persisted["entries"]) == len(ledger.transactions)
+  for persisted_row, folded_row in zip(
+    persisted["entries"], ledger.transactions, strict=True
+  ):
     assert persisted_row["id"] == folded_row.id
     assert persisted_row["balances"] == folded_row.balances
 

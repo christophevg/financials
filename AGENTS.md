@@ -69,18 +69,32 @@ tracked files — source, tests, docs, scripts, and commit messages.
   `make format` (ruff format + autofix) /
   `make run CMD=<subcommand> ARGS="<flags>"`.
 - `view`, `add`, `delete`, `edit`, `report` are thin wrappers over `run`.
-- CLI: `tui [--days X]` = scrollable view (Textual; `src/financials/tui.py`).
-  Consumes `ledger_view.build_view` (the composition as data — one
-  composition, `list` and TUI both render from it; knobs: `days_back`,
-  `projection_horizon`, `today` for tests). The table holds the FULL
-  committed history (build_view's `history` list, ascending); initial
-  position: PROJECTIE separator at the viewport bottom with the 10 rows
-  above it from the top (no projection → last row); cursor rests on
-  the anchor. Keys ↑/↓ j/k, PgUp/PgDn, Home/End, q/Esc. Step 2 (in):
-  Enter opens the readonly `DetailScreen` (full row data + provenance
-  status; `_entries` maps row-key id → (entry, checking, savings,
-  kind)); Esc/q closes. The dialog composes from the entry tuple — the
-  editable step reuses this screen.
+- CLI: `tui [--days X]` = scrollable view (Textual; package
+  `src/financials/tui/` — `__init__.py` view + dialogs, `add.py` the
+  add dialog). Consumes `ledger_view.build_view` (the composition as
+  data — one composition, `list` and TUI both render from it; knobs:
+  `days_back`, `projection_horizon`, `today` for tests). The table
+  holds the FULL committed history (build_view's `history` list,
+  ascending); initial position: PROJECTIE separator at the viewport
+  bottom with the 10 rows above it from the top (no projection → last
+  row); cursor rests on the anchor. Keys ↑/↓ j/k, PgUp/PgDn, Home/End,
+  q/Esc. Step 2 (in): Enter opens the readonly `DetailScreen` (full
+  row data + provenance status; `_entries` maps row-key id → (entry,
+  checking, savings, kind)); Esc/q closes. The dialog composes from
+  the entry tuple — the editable step reuses this screen. Step 3: `a`
+  opens the `AddScreen` form (`tui/add.py`, dismisses the new id): a
+  native Textual form whose RULES are imported from the CLI modules
+  (entry._validate / commands.projected_checking / cmd_add /
+  expected.add_expected) — same dispatch as the CLI (future date →
+  expected register). Enter walks the fields, Esc cancels, the saldo
+  gate compares against a fresh projection. The category is a fuzzy
+  autocomplete (`textual-autocomplete`, screen-level overlay — never a
+  grid child: that shifts the layout): focus opens the full approved
+  list, typing narrows, completion advances; Enter on a hidden
+  dropdown accepts an exact approved category only. Post-save the table
+  rebuilds via build_view (table.clear + row_ids reset — the parallel
+  list is ours) and the cursor lands on the new row; a toast confirms
+  the id.
 - CLI: `confirm [ID]` = zero-prompt confirm of open entries (landed
   `e####` / `r:-hash`; committed `t####` = no-op; `g####` = group
   multi-confirm; bare = OPEN-section picker). Fast path; `edit <id>`
@@ -102,8 +116,15 @@ tracked files — source, tests, docs, scripts, and commit messages.
   engine and is journaled to `journal.jsonl` (append-only).
 - New global fix ops MUST be added to `GLOBAL_OPS` in `fixes.py` and MUST
   be idempotent (return "nothing to do" when already applied).
-- Categories come from config (`approved_categories()`); the data-quality
-  tests lock data invariants and skip when no data file exists.
+- Categories come from config (`approved_categories()`).
+- **Tests are SELF-CONTAINED — they NEVER read a real/used store**
+  (owner rule, 2026-09-28, after the live gates red-flagged on a
+  healthy journal: any trailing update/delete makes the fold's tip a
+  journal row, not an entry). Invariant gates run on synthetic
+  journals built through the real write path (see
+  test_data_quality.py, test_fold_checkpoint_agreement_full_spectrum)
+  — asserting the WRITERS preserve the invariants, not that history
+  stayed clean.
 - Every store a flow READS must be isolated in tests (conftest covers
   journal + expected; groups/recurrences patches are per-test file) —
   stores resolve at CALL time through the `*_file()` choke points in

@@ -1,15 +1,17 @@
-"""The TUI (step 1+2): a scrollable ledger view — Textual App +
+"""The TUI (steps 1–3): a scrollable ledger view — Textual App +
 DataTable, consuming build_view (the same composition as `list`; one
-composition, two renderers) — plus the step-2 readonly detail dialog.
+composition, two renderers) — the step-2 readonly detail dialog, and
+the step-3 add dialog (`a`, implemented in tui/add.py).
 
 Keys: up/down (j/k) move the row cursor one row; pageup/pagedown by
-page; home/end jump to the first/last row; q or escape quits. The
-DataTable clamps at the first/last row by itself (no offset math here)
-and auto-scrolls the viewport when the cursor reaches a screen edge.
-The table holds the FULL committed history above the actuals window;
-the initial view is positioned on the projection: the PROJECTIE row at
-the bottom of the viewport with the 10 rows above it starting at the
-top, so the forecast's near future is what you see first.
+page; home/end jump to the first/last row; q or escape quits; `a`
+opens the add dialog; enter opens the detail dialog on an entry row.
+The DataTable clamps at the first/last row by itself (no offset math
+here) and auto-scrolls the viewport when the cursor reaches a screen
+edge. The table holds the FULL committed history above the actuals
+window; the initial view is positioned on the projection: the PROJECTIE
+row at the bottom of the viewport with the 10 rows above it starting at
+the top, so the forecast's near future is what you see first.
 
 Row design: every entry row is TWO lines tall — the Datum column
 holds the date; the merged second column holds the id (line 1, dim)
@@ -25,6 +27,11 @@ keys and dialogs stay row-based.
 Step 2: Enter on an entry row opens the readonly DetailScreen (the
 row's full data + a provenance status line); Esc/q closes it. The
 screen composes from the entry tuple so the editable step reuses it.
+
+Step 3: `a` opens the AddScreen form (native widgets; the validation
+and save rules are imported from the CLI modules). On save the table
+rebuilds from a fresh build_view and the cursor lands on the newly
+added row; a toast confirms the new id.
 """
 
 from __future__ import annotations
@@ -44,6 +51,7 @@ from textual.widgets._data_table import RowDoesNotExist
 
 from financials.ledger_view import ViewRows, _fmt, build_view
 from financials.model import Transaction
+from financials.tui.add import AddScreen
 
 _DASH = "—"
 
@@ -244,7 +252,9 @@ class LedgerTUI(App[None]):
   filling the terminal height, pinned footer. The table holds the full
   committed history, then OPEN, then the projection to year end (the
   footer's own horizon); the initial view is anchored on the
-  projection's start. Enter on an entry row opens its detail dialog."""
+  projection's start. Enter on an entry row opens its detail dialog;
+  `a` opens the add dialog (which saves and re-lands the cursor on the
+  new row)."""
 
   CSS = """
   #kasboek-header {
@@ -262,6 +272,7 @@ class LedgerTUI(App[None]):
   """
 
   BINDINGS = [
+    Binding("a", "add", "Toevoegen"),
     Binding("q", "quit", "Afsluiten"),
     Binding("escape", "quit", "Afsluiten", show=False),
   ]
@@ -291,6 +302,12 @@ class LedgerTUI(App[None]):
     yield Static("", id="kasboek-footer")
 
   def on_mount(self) -> None:
+    self._load_view()
+
+  def _load_view(self, focus_id: str | None = None) -> None:
+    """(Re)build the composition and render it — on_mount, and after
+    every save that changed the ledger (with the cursor re-landed on
+    the affected row)."""
     today = self._today or date.today()
     self._window_start = (today - timedelta(days=self._days_back)).isoformat()
     self._view = build_view(
@@ -301,15 +318,19 @@ class LedgerTUI(App[None]):
       today=today,
     )
     assert self._view is not None
-    self._fill_table(self._view)
+    self._fill_table(self._view, focus_id=focus_id)
 
-  def _fill_table(self, view: ViewRows) -> None:
+  def _fill_table(self, view: ViewRows, focus_id: str | None = None) -> None:
     """Render the composed view into the table and the pinned strips.
     One continuous list: full committed history (ascending, the TUI's
     extra knob — `list` never renders it), then the actuals window,
-    OPEN, PROJECTIE."""
+    OPEN, PROJECTIE. focus_id lands the cursor on that row after the
+    refresh (the post-save behavior); without it the initial anchor
+    positioning applies."""
     table = self.query_one("#ledger-table", LedgerTable)
     window_start = self._window_start
+    table.clear()  # a post-save rebuild must not duplicate rows
+    table.row_ids = []  # clear() doesn't touch the parallel id list
     self._entries = {}
     self._row_heights = []
 
@@ -362,7 +383,8 @@ class LedgerTUI(App[None]):
     self.query_one("#kasboek-header", Static).update(header)
 
     hint = (
-      "↑/↓ of j/k: regel · PgUp/PgDn: pagina · Home/End: begin/eind · q: afsluiten"
+      "↑/↓ of j/k: regel · PgUp/PgDn: pagina · Home/End: begin/eind · "
+      "a: nieuw · enter: detail · q: afsluiten"
     )
     lines = [f"[dim]{escape(line)}[/dim]" for line in view.footer]
     lines.append(f"[dim]{hint}[/dim]")
@@ -371,13 +393,27 @@ class LedgerTUI(App[None]):
     # Column fit needs the final layout: refit once after refresh, then
     # position (a terminal resize refits via _on_resize).
     table.call_after_refresh(table.fit_columns)
-    # Initial position: the PROJECTIE row at the bottom of the viewport
-    # with the 10 lines above it starting at the top (clamped at the
-    # table top; no PROJECTIE → the table end). The cursor sits on that
-    # row, so ↓ continues from what you see.
-    anchor = self._initial_anchor_row(table)
-    table.call_after_refresh(self._position_at, table, anchor)
+    if focus_id and focus_id in table.row_ids:
+      # Post-save landing: the cursor onto the new row (the viewport
+      # follows; scroll math stays row-based here).
+      table.call_after_refresh(
+        self._focus_row, table, table.row_ids.index(focus_id)
+      )
+    else:
+      # Initial position: the PROJECTIE row at the bottom of the
+      # viewport with the 10 lines above it starting at the top
+      # (clamped at the table top; no PROJECTIE → the table end). The
+      # cursor sits on that row, so ↓ continues from what you see.
+      anchor = self._initial_anchor_row(table)
+      table.call_after_refresh(self._position_at, table, anchor)
     table.focus()
+
+  @staticmethod
+  def _focus_row(table: LedgerTable, row: int) -> None:
+    """Post-save cursor landing: the cursor on the given row, clamped,
+    viewport following it."""
+    if table.row_count:
+      table.move_cursor(row=max(0, min(row, table.row_count - 1)))
 
   @staticmethod
   def _initial_anchor_row(table: LedgerTable) -> int:
@@ -412,6 +448,26 @@ class LedgerTUI(App[None]):
       start += height
     table.scroll_to(x=0, y=start, animate=False)
     table.move_cursor(row=anchor, scroll=False)
+
+  def action_add(self) -> None:
+    """`a`: open the add dialog — never stacked on an open dialog
+    (DetailScreen/AddScreen are ModalScreens; the ledger lives on the
+    default screen)."""
+    if isinstance(self.screen, ModalScreen):
+      return
+    self.push_screen(
+      AddScreen(today=self._today or date.today()),
+      callback=self._on_add_done,
+    )
+
+  def _on_add_done(self, new_id: str | None) -> None:
+    """The add dialog closed: a toast confirms the save and the table
+    rebuilds with the cursor on the new row. None (cancelled) leaves
+    everything exactly as it was."""
+    if not new_id:
+      return
+    self.notify(f"Opgeslagen als {new_id}", title="Toegevoegd", timeout=4)
+    self._load_view(focus_id=new_id)
 
   def on_data_table_row_selected(
     self, event: DataTable.RowSelected
