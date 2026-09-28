@@ -131,14 +131,19 @@ def test_cursor_moves_and_clamps(tmp_path, monkeypatch):
     async with app.run_test() as pilot:
       table = app.query_one("#ledger-table")
       last = table.row_count - 1
-      await pilot.press("k")  # already at the top: stays
-      assert table.cursor_row == 0
-      await pilot.press("end")
+      await pilot.pause()  # let the deferred initial-position callback run
+      # Initial position: no projection in this seed → the anchor is
+      # the last row (cursor starts there, viewport from the top).
       assert table.cursor_row == last
-      await pilot.press("j")  # already at the bottom: stays
+      await pilot.press("k")  # one row up
+      assert table.cursor_row == last - 1
+      await pilot.press("j")  # back down, clamped at the bottom
+      await pilot.press("j")
       assert table.cursor_row == last
       await pilot.press("home")
       assert table.cursor_row == 0
+      await pilot.press("end")
+      assert table.cursor_row == last
 
   asyncio.run(scenario())
 
@@ -156,18 +161,73 @@ def test_history_scrolls_in_above_the_window(tmp_path, monkeypatch):
     app = LedgerTUI(days_back=3, today=TEST_TODAY)
     async with app.run_test() as pilot:
       table = app.query_one("#ledger-table")
+      await pilot.pause()  # let the deferred initial-position callback run
       # 1 history row (09-20) + 1 actual (09-27); no separators (no
       # open rows, no projection in this seed). Journaled ids are
       # content hashes; assert the Datum column per position instead.
       assert table.row_count == 2
       assert table.get_row_at(0)[1].plain == "2026-09-20"
       assert table.get_row_at(1)[1].plain == "2026-09-27"
-      # Cursor anchored on the first ACTUAL row (index 1), not history.
+      # No PROJECTIE section here: the anchor is the last row, so the
+      # cursor starts there (the 10-rows-above rule clamps at the top).
       assert table.cursor_row == 1
       # Scroll up into history, clamped at the first transaction.
       await pilot.press("k")
       assert table.cursor_row == 0
       await pilot.press("k")
       assert table.cursor_row == 0
+
+  asyncio.run(scenario())
+
+
+def test_initial_position_anchored_on_projection(tmp_path, monkeypatch):
+  """On open, the PROJECTIE separator sits at the bottom of the
+  viewport with the 10 rows above it starting at the top; the cursor
+  rests on the PROJECTIE row."""
+  journal = _isolated(monkeypatch, tmp_path)
+  # Older history (3 rows) + actuals (2 rows) + an expected entry (the
+  # OPEN section) + a monthly rule (the PROJECTIE section).
+  cmd_add("2026-08-01", "Oud", "Uitgaven", -10.0, journal=journal)
+  cmd_add("2026-09-26", "Huur", "Uitgaven", -550.0, journal=journal)
+  cmd_add("2026-09-27", "Boodschappen", "Uitgaven", -65.0, journal=journal)
+  save_expected(
+    [
+      Transaction(
+        id="e9001",
+        date="2026-09-27",
+        description="Cadeau",
+        category="Uitgaven",
+        amount_eur=-25.0,
+        status=STATUS_EXPECTED,
+      )
+    ]
+  )
+  save_recurrences(
+    [
+      Recurrence(
+        description="Sport",
+        category="Uitgaven",
+        amount=-30.0,
+        frequency="monthly",
+        day=5,
+        start="2026-01-01",
+      )
+    ]
+  )
+
+  async def scenario() -> None:
+    app = LedgerTUI(days_back=3, today=TEST_TODAY)
+    async with app.run_test() as pilot:
+      table = app.query_one("#ledger-table")
+      await pilot.pause()  # let the deferred initial-position callback run
+      # Rows: 1 history + 2 actuals + 1 OPEN sep + 2 open rows (e9001
+      # + the rule's 09-05 instance inside the grace lookback)
+      # + 1 PROJECTIE sep + instances to year end (10-05, 11-05, 12-05)
+      # = 10 rows; the separator (index 7) is the anchor.
+      assert table.row_count == 10
+      # The anchor: the PROJECTIE separator's row index.
+      assert table.cursor_row == table.get_row_index("sep-projection")
+      assert table.get_row_at(table.cursor_row)[2].plain == "PROJECTIE"
+      assert table.scroll_y == 0.0  # 10 context rows → top of the table
 
   asyncio.run(scenario())

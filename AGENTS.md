@@ -76,9 +76,11 @@ tracked files — source, tests, docs, scripts, and commit messages.
   committed history (build_view's `history` list, ascending); the
   cursor anchors on the first actual row of the default window (last
   `days_back` days), and ↑/k walks back through history to the first
-  transaction. Keys ↑/↓ j/k, PgUp/PgDn, Home/End, q/Esc. Step-2 hooks
-  already in place: `LedgerTable.selected_id()` returns the selected
-  entry id (None on separators).
+  transaction. Keys ↑/↓ j/k, PgUp/PgDn, Home/End, q/Esc. Initial
+  position: PROJECTIE separator at the viewport bottom with the 10 rows
+  above it from the top (no projection → last row); the cursor rests on
+  that anchor. Step-2 hooks already in place: `LedgerTable.selected_id()`
+  returns the selected entry id (None on separators).
 - CLI: `confirm [ID]` = zero-prompt confirm of open entries (landed
   `e####` / `r:-hash`; committed `t####` = no-op; `g####` = group
   multi-confirm; bare = OPEN-section picker). Fast path; `edit <id>`
