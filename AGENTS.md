@@ -69,6 +69,13 @@ tracked files — source, tests, docs, scripts, and commit messages.
   `make format` (ruff format + autofix) /
   `make run CMD=<subcommand> ARGS="<flags>"`.
 - `view`, `add`, `delete`, `edit`, `report` are thin wrappers over `run`.
+- CLI: `tui [--days X]` = scrollable view (Textual; `src/financials/tui.py`).
+  Consumes `ledger_view.build_view` (the composition as data — one
+  composition, `list` and TUI both render from it; knobs: `days_back`,
+  `projection_horizon`, `today` for tests). Default window 3 days back,
+  projection to year end; keys ↑/↓ j/k, PgUp/PgDn, Home/End, q/Esc.
+  Step-2 hooks already in place: `LedgerTable.selected_id()` returns the
+  selected entry id (None on separators).
 - CLI: `confirm [ID]` = zero-prompt confirm of open entries (landed
   `e####` / `r:-hash`; committed `t####` = no-op; `g####` = group
   multi-confirm; bare = OPEN-section picker). Fast path; `edit <id>`

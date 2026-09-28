@@ -219,6 +219,17 @@ def main() -> None:
     help="Only show rows whose description, category or id contains this (case-insensitive).",
   )
 
+  tui_parser = sub.add_parser(
+    "tui",
+    help="Interactive TUI: scrollable ledger view (actuals + openstaand + projection).",
+  )
+  tui_parser.add_argument(
+    "--days",
+    type=int,
+    default=3,
+    help="Actual history window in days (default 3; the projection runs to year end).",
+  )
+
   recurrence_parser = sub.add_parser(
     "recurrence",
     help="Manage recurring rules (the forecast's repeating entries).",
@@ -353,6 +364,10 @@ def main() -> None:
     from financials.ledger_view import print_ledger_view
 
     print_ledger_view(days=args.days, project=args.project, filter=args.filter)
+  elif args.command == "tui":
+    from financials.tui import run_tui
+
+    run_tui(days_back=args.days)
   elif args.command == "recurrence":
     from financials import recurrence_cli
 

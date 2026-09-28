@@ -22,6 +22,7 @@ and recurring rules) — never from statistical guesswork.
 | `financials confirm [ID]` | Confirm an open entry in one go: a landed expected entry (`e####`) or rule instance (`r:...`) commits as-is, zero prompts (the fast path; `edit <id>` is the adjust path). A group id (`g####`) confirms all landed members in one go. Bare `confirm` shows the OPEN section to pick from. |
 | `financials group ...` | Group rows into one virtual rollup row (credit-card statements): `list`, `show <g>`, `create`, `add <g> <id>...`, `remove <g> <id>...`, `edit <g>`, `delete <g>`. The group is addressed by id (`g####`, unique prefix) or by name (case-insensitive; `add Mastercard e0016`); `add`/`remove` accept multiple ids in one go (all-or-nothing). The view shows the rollup (`⧉ <name>`) with the member total at the rollup date; members keep their ids and are never modified by grouping. |
 | `financials list --days X --project Y` | Ledger view: actuals of the last X days + projection of the next Y days (expected one-offs + recurring-rule expansions, superseded per period by real entries). |
+| `financials tui [--days X]` | Interactive scrollable view (Textual): actuals of the last X days (default 3), openstaand, projection to year end; pinned header/footer. Keys: ↑/↓ or j/k one row, PgUp/PgDn page, Home/End ends, q/Esc quit. |
 | `financials report [--months N] [--year Y] [--top N]` | Visual report: monthly flows, category breakdown, balance curve. |
 
 ### Shorthand quick-add

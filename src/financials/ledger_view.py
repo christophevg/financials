@@ -10,6 +10,7 @@ expansions. The projection is a VIEW: nothing here writes stores.
 from __future__ import annotations
 
 import calendar
+from dataclasses import dataclass
 from datetime import date, timedelta
 
 from rich import box
@@ -364,18 +365,51 @@ def _committed_rollups(committed: list[Transaction]):
   return out
 
 
-def print_ledger_view(days: int, project: int, filter: str | None = None) -> None:
-  """`financials list`: the committed rows come from the journaled ledger
-  (checkpoint + tail replay) and the projection composes over the
-  ledger's tip balances. Structural rows (openings/corrections) are
-  excluded from the actuals window: they are seed/reconciliation
-  artifacts, not cashflow.
+@dataclass
+class ViewRows:
+  """The composed view as DATA (renderer-agnostic): the `list` renderer
+  and the TUI consume the same composition — one composition, two
+  renderers. `open`/`future`/`rollups` rows keep walk order; `open` and
+  `future` rows are (Transaction, checking, savings) exactly as `_walk`
+  emits them; `rollups` are (rollup_row, member_rows) as
+  `_committed_rollups` emits them. Renderers derive section breaks from
+  the empty-list checks, never from label rows."""
+  actuals: list[Transaction]
+  rollups: list[tuple]
+  open: list[tuple]
+  future: list[tuple]
+  footer: list[str]
+  needle: str  # "" when unfiltered
+  today: date
+  days: int
+  project: int
+
+
+def build_view(
+  days: int,
+  project: int,
+  filter: str | None = None,
+  *,
+  today: date | None = None,
+  days_back: int | None = None,
+  projection_horizon: date | None = None,
+) -> ViewRows:
+  """The `list` composition as pure data: the committed rows (journaled
+  ledger), the projected walk, the open section, the future projection
+  and the footer lines. No rendering — `print_ledger_view` and the TUI
+  both consume this.
+
+  Keyword-only knobs (the `list` renderer never passes them):
+  `days_back` extends the actuals window start (`today − days_back` —
+  the TUI's 3-day window); `projection_horizon` extends the projection
+  cut (the TUI's year-end horizon — the footer already walks to year
+  end, so extending the projection to it costs nothing).
 
   `filter` (grep): case-insensitive substring on description, category
   or id; a VIEW aid only — it limits which rows are shown in both
   windows (actuals + projection), while balances and the footer are
   always computed from the full unfiltered chain."""
-  today = date.today()
+  today = today or date.today()
   walk, anchor = _projection_walk(today, project=project)
   committed = [row for row in view_rows() if not row.description.startswith(_STRUCTURAL)]
 
@@ -386,7 +420,7 @@ def print_ledger_view(days: int, project: int, filter: str | None = None) -> Non
   # OUT-OF-ORDER commit — a later-dated row committed while an earlier
   # instance is still unconfirmed (e.g. a monthly rule on the 24th, a
   # 09-25 row committed first). No anchor -> grace from today.
-  window_end = today + timedelta(days=project)
+  window_end = projection_horizon or (today + timedelta(days=project))
   # The middle section: every uncommitted row dated on or before today
   # (overdue expected + landed rule instances); the rest is the projection,
   # cut at the --project window (the footer's walk runs to the year end).
@@ -415,6 +449,37 @@ def print_ledger_view(days: int, project: int, filter: str | None = None) -> Non
     member.id for _rollup, members in fully_committed_rollups for member in members
   }
   committed_shown = [t for t in committed_shown if t.id not in hidden_committed]
+  window_days = days_back if days_back is not None else days
+  actuals = [
+    t
+    for t in committed_shown
+    if today - timedelta(days=window_days) <= date.fromisoformat(t.date) <= today
+  ]
+  footer = _footer_lines(
+    walk,
+    anchor.balance_checking if anchor else None,
+    anchor.balance_savings if anchor else None,
+    today,
+  )
+  return ViewRows(
+    actuals=actuals,
+    rollups=fully_committed_rollups,
+    open=open_rows,
+    future=future,
+    footer=footer,
+    needle=needle,
+    today=today,
+    days=days,
+    project=project,
+  )
+
+
+def print_ledger_view(days: int, project: int, filter: str | None = None) -> None:
+  """`financials list` renderer: composes via build_view and renders the
+  same table as before (identical output — the composition moved to
+  build_view, the rendering stayed here)."""
+  view = build_view(days, project, filter)
+  needle = view.needle
   console.print(
     f"[bold]Kasboek[/bold] [dim]— journaal-geboekt; actuals: laatste {days} "
     f"dagen · openstaand: geland maar nog niet bevestigd (expected + regels "
@@ -431,16 +496,11 @@ def print_ledger_view(days: int, project: int, filter: str | None = None) -> Non
   table.add_column("Checking", justify="right")
   table.add_column("Spaar", justify="right")
 
-  actual_rows = [
-    t
-    for t in committed_shown
-    if today - timedelta(days=days) <= date.fromisoformat(t.date) <= today
-  ]
-  for r in _render_actual_rows(actual_rows):
+  for r in _render_actual_rows(view.actuals):
     table.add_row(r[0], r[1], r[2], r[3], f"{r[4]:+,.2f}", _fmt_balance(r[5]), _fmt_balance(r[6]))
-  for rollup, members in fully_committed_rollups:
+  for rollup, members in view.rollups:
     member_ids = {t.id for t in members}
-    if not any(t.id in member_ids for t in actual_rows):
+    if not any(t.id in member_ids for t in view.actuals):
       continue
     table.add_row(
       rollup.id,
@@ -452,12 +512,12 @@ def print_ledger_view(days: int, project: int, filter: str | None = None) -> Non
       _fmt_balance(rollup.balance_savings),
     )
 
-  if open_rows:
+  if view.open:
     table.add_section()
     # Label in the Omschrijving column: the widest one, so rich wraps at
     # word boundaries (never mid-word) on narrow terminals.
     table.add_row("", "", "OPEN", "", "", "", "")
-    for t, checking, savings in open_rows:
+    for t, checking, savings in view.open:
       table.add_row(
         t.id,
         t.date,
@@ -467,10 +527,10 @@ def print_ledger_view(days: int, project: int, filter: str | None = None) -> Non
         _fmt_balance(checking),
         _fmt_balance(savings),
       )
-  if future:
+  if view.future:
     table.add_section()
     table.add_row("", "", "PROJECTIE", "", "", "", "")
-    for t, checking, savings in future:
+    for t, checking, savings in view.future:
       table.add_row(
         t.id,  # r:-hash ids are addressable: edit <r-id> works on them
         t.date,
@@ -483,19 +543,13 @@ def print_ledger_view(days: int, project: int, filter: str | None = None) -> Non
       )
   console.print(table)
 
-  if not committed_shown and not open_rows and not future:
+  if not view.actuals and not view.open and not view.future and not view.rollups:
     if needle:
       console.print(f"[dim]Geen rijen die matchen '{needle}'.[/dim]")
     else:
       console.print("[dim]Geen rijen in deze vensters.[/dim]")
 
-  footer = _footer_lines(
-    walk,
-    anchor.balance_checking if anchor else None,
-    anchor.balance_savings if anchor else None,
-    today,
-  )
-  if footer:
+  if view.footer:
     console.print()
-    for line in footer:
+    for line in view.footer:
       console.print(f"[dim]{escape(line)}[/dim]")
