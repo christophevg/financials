@@ -66,6 +66,31 @@ confirm: CMD=confirm
 confirm: ARGS=$(TX)
 confirm: run
 
+# group support
+
+DATE ?= $(shell date +%Y-%m-%d)
+DATE := $(DATE)
+
+list-groups: ## List known groups
+list-groups: CMD=group list
+list-groups: run
+
+create-group: ## Create a new group
+create-group: CMD=group create "$(GROUP)" --date $(DATE)
+create-group: run
+
+show-group: ## Show a group
+show-group: CMD=group show "$(GROUP)"
+show-group: run
+
+group-add: ## Add a transaction to a group
+group-add: CMD=group add "$(GROUP)" $(IDS)
+group-add: run
+
+group-remove: ## Remove a transaction from a group
+group-remove: CMD=group remove "$(GROUP)" $(IDS)
+group-remove: run
+
 # manage recurring transactions
 
 add-recurring: ## Add a recurring transaction
