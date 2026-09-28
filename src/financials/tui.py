@@ -6,11 +6,14 @@ Keys: up/down (j/k) move the row cursor one row; pageup/pagedown by
 page; home/end jump to the first/last row; q or escape quits. The
 DataTable clamps at the first/last row by itself (no offset math here)
 and auto-scrolls the viewport when the cursor reaches a screen edge.
+The table holds the FULL committed history: the default window (last
+`days_back` days) is only where the cursor anchors on open — scrolling
+up walks back through history to the first transaction.
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from rich.markup import escape
 from rich.text import Text
@@ -85,9 +88,9 @@ class LedgerTable(DataTable):
 
 class LedgerTUI(App[None]):
   """The scrollable ledger (step 1): pinned header, scrollable rows
-  filling the terminal height, pinned footer. Actuals = the last
-  `days_back` days, then OPEN, then the projection to year end (the
-  footer's own horizon)."""
+  filling the terminal height, pinned footer. The table holds the full
+  committed history, then OPEN, then the projection to year end (the
+  footer's own horizon); the cursor anchors on the default window."""
 
   CSS = """
   #kasboek-header {
@@ -109,10 +112,13 @@ class LedgerTUI(App[None]):
     Binding("escape", "quit", "Afsluiten", show=False),
   ]
 
+  theme = "textual-light"
+
   def __init__(self, days_back: int = 3, today: date | None = None) -> None:
     super().__init__()
     self._days_back = days_back
     self._today = today
+    self._window_start: str = ""
     self._view: ViewRows | None = None
 
   def compose(self) -> ComposeResult:
@@ -130,6 +136,7 @@ class LedgerTUI(App[None]):
 
   def on_mount(self) -> None:
     today = self._today or date.today()
+    self._window_start = (today - timedelta(days=self._days_back)).isoformat()
     self._view = build_view(
       days=self._days_back,
       project=0,
@@ -141,11 +148,33 @@ class LedgerTUI(App[None]):
     self._fill_table(self._view)
 
   def _fill_table(self, view: ViewRows) -> None:
-    """Render the composed view into the table and the pinned strips."""
+    """Render the composed view into the table and the pinned strips.
+    One continuous list: full committed history (ascending, the TUI's
+    extra knob — `list` never renders it), then the actuals window,
+    OPEN, PROJECTIE. No history separator: the default `days_back`
+    window is simply where the cursor anchors; scrolling up from it
+    walks back through history to the first transaction."""
     table = self.query_one("#ledger-table", LedgerTable)
-    for t in view.actuals:
-      row = (t, t.balance_checking, t.balance_savings)
+    window_start = self._window_start
+
+    history_rows: list[tuple] = [
+      (t, t.balance_checking, t.balance_savings) for t in view.history
+    ]
+    for rollup, members in view.rollups:
+      member_ids = {m.id for m in members}
+      if any(t.id in member_ids for t in view.actuals):
+        continue  # renders in/after the actuals window (list semantics)
+      if rollup.date < window_start:
+        history_rows.append(
+          (rollup, rollup.balance_checking, rollup.balance_savings)
+        )
+    history_rows.sort(key=lambda row: (row[0].date, row[0].id))
+    for row in history_rows:
       self._add_entry(table, row, style="")
+
+    first_actual_index = len(history_rows)
+    for t in view.actuals:
+      self._add_entry(table, (t, t.balance_checking, t.balance_savings), style="")
     for rollup, members in view.rollups:
       member_ids = {m.id for m in members}
       if not any(t.id in member_ids for t in view.actuals):
@@ -178,6 +207,12 @@ class LedgerTUI(App[None]):
     lines.append(f"[dim]{hint}[/dim]")
     self.query_one("#kasboek-footer", Static).update("\n".join(lines))
 
+    # Anchor the cursor on the first actual row: the view opens on the
+    # default window (history above is out of sight but one ↑ away,
+    # down to the first transaction). move_cursor clamps and scrolls
+    # the cursor row into view.
+    if table.row_count:
+      table.move_cursor(row=min(first_actual_index, table.row_count - 1))
     table.focus()
 
   def _add_entry(

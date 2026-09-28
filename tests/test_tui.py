@@ -113,7 +113,8 @@ def test_app_renders_rows_and_sections(tmp_path, monkeypatch):
     async with app.run_test():
       table = app.query_one("#ledger-table")
       # 2 actuals + 1 section separator (OPEN) + 1 open row; no rules in
-      # this seed, so no PROJECTIE section.
+      # this seed, so no PROJECTIE section. No history rows in this seed
+      # (both rows are inside the 3-day window).
       assert table.row_count == 4
       assert "e9001" in table.row_ids
       assert None in table.row_ids  # separators are not entries
@@ -137,6 +138,36 @@ def test_cursor_moves_and_clamps(tmp_path, monkeypatch):
       await pilot.press("j")  # already at the bottom: stays
       assert table.cursor_row == last
       await pilot.press("home")
+      assert table.cursor_row == 0
+
+  asyncio.run(scenario())
+
+
+def test_history_scrolls_in_above_the_window(tmp_path, monkeypatch):
+  """The table holds the full committed history; the cursor anchors on
+  the first actual row (the default window), and k/↑ from there walks
+  back into history down to the first transaction."""
+  journal = _isolated(monkeypatch, tmp_path)
+  # One row older than the 3-day window, one inside it.
+  cmd_add("2026-09-20", "Salaris", "Inkomsten", 2000.0, journal=journal)
+  cmd_add("2026-09-27", "Boodschappen", "Uitgaven", -65.0, journal=journal)
+
+  async def scenario() -> None:
+    app = LedgerTUI(days_back=3, today=TEST_TODAY)
+    async with app.run_test() as pilot:
+      table = app.query_one("#ledger-table")
+      # 1 history row (09-20) + 1 actual (09-27); no separators (no
+      # open rows, no projection in this seed). Journaled ids are
+      # content hashes; assert the Datum column per position instead.
+      assert table.row_count == 2
+      assert table.get_row_at(0)[1].plain == "2026-09-20"
+      assert table.get_row_at(1)[1].plain == "2026-09-27"
+      # Cursor anchored on the first ACTUAL row (index 1), not history.
+      assert table.cursor_row == 1
+      # Scroll up into history, clamped at the first transaction.
+      await pilot.press("k")
+      assert table.cursor_row == 0
+      await pilot.press("k")
       assert table.cursor_row == 0
 
   asyncio.run(scenario())

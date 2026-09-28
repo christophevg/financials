@@ -374,6 +374,7 @@ class ViewRows:
   emits them; `rollups` are (rollup_row, member_rows) as
   `_committed_rollups` emits them. Renderers derive section breaks from
   the empty-list checks, never from label rows."""
+  history: list[Transaction]  # committed, OLDER than the actuals window (ascending)
   actuals: list[Transaction]
   rollups: list[tuple]
   open: list[tuple]
@@ -450,11 +451,20 @@ def build_view(
   }
   committed_shown = [t for t in committed_shown if t.id not in hidden_committed]
   window_days = days_back if days_back is not None else days
+  window_start = today - timedelta(days=window_days)
   actuals = [
-    t
-    for t in committed_shown
-    if today - timedelta(days=window_days) <= date.fromisoformat(t.date) <= today
+    t for t in committed_shown if window_start <= date.fromisoformat(t.date) <= today
   ]
+  # The TUI's continuous history: every committed row OLDER than the
+  # window start (ascending). `list` never renders it; the TUI renders
+  # it above the actuals window so scrolling up reaches the first
+  # transaction. Fully-committed rollups with rollup date in history
+  # interleave here (collapsed); their members stay hidden from the
+  # chain via hidden_committed.
+  history = [
+    t for t in committed_shown if date.fromisoformat(t.date) < window_start
+  ]
+  history.sort(key=lambda t: (t.date, t.id))
   footer = _footer_lines(
     walk,
     anchor.balance_checking if anchor else None,
@@ -462,6 +472,7 @@ def build_view(
     today,
   )
   return ViewRows(
+    history=history,
     actuals=actuals,
     rollups=fully_committed_rollups,
     open=open_rows,

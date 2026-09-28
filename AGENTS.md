@@ -72,10 +72,13 @@ tracked files — source, tests, docs, scripts, and commit messages.
 - CLI: `tui [--days X]` = scrollable view (Textual; `src/financials/tui.py`).
   Consumes `ledger_view.build_view` (the composition as data — one
   composition, `list` and TUI both render from it; knobs: `days_back`,
-  `projection_horizon`, `today` for tests). Default window 3 days back,
-  projection to year end; keys ↑/↓ j/k, PgUp/PgDn, Home/End, q/Esc.
-  Step-2 hooks already in place: `LedgerTable.selected_id()` returns the
-  selected entry id (None on separators).
+  `projection_horizon`, `today` for tests). The table holds the FULL
+  committed history (build_view's `history` list, ascending); the
+  cursor anchors on the first actual row of the default window (last
+  `days_back` days), and ↑/k walks back through history to the first
+  transaction. Keys ↑/↓ j/k, PgUp/PgDn, Home/End, q/Esc. Step-2 hooks
+  already in place: `LedgerTable.selected_id()` returns the selected
+  entry id (None on separators).
 - CLI: `confirm [ID]` = zero-prompt confirm of open entries (landed
   `e####` / `r:-hash`; committed `t####` = no-op; `g####` = group
   multi-confirm; bare = OPEN-section picker). Fast path; `edit <id>`
