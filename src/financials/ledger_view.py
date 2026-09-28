@@ -157,6 +157,58 @@ def _split_open(
   return open_rows, future
 
 
+def _projection_walk(
+  today: date, project: int = 1
+) -> tuple[list[tuple[Transaction, float | None, float | None]], Transaction | None]:
+  """The projection spine shared by `print_ledger_view` and `open_rows`:
+  boot the committed ledger, seed from the anchor's balances, compose the
+  overlay over a horizon of at least the year end (the footer's state_at
+  cuts at month/year end; a 1-day `project` keeps the walk lean when the
+  consumer only needs the open section) and return (walk, anchor)."""
+  from financials.model import load_expected
+
+  rows = view_rows()
+  committed = [row for row in rows if not row.description.startswith(_STRUCTURAL)]
+  anchor = _anchor_row([t for t in committed if t.date <= today.isoformat()], today)
+  start_checking = anchor.balance_checking if anchor else None
+  start_savings = anchor.balance_savings if anchor else None
+
+  # The projection reaches back past the ledger's anchor (the last
+  # committed row) by a grace lookback: rule instances between the anchor
+  # and today expand too, so a landed-but-unconfirmed instance is visible
+  # (and superseded by the real entry once committed). The grace covers an
+  # OUT-OF-ORDER commit — a later-dated row committed while an earlier
+  # instance is still unconfirmed (e.g. a monthly rule on the 24th, a
+  # 09-25 row committed first). No anchor -> grace from today.
+  window_start = (
+    date.fromisoformat(anchor.date) - timedelta(days=RULE_LOOKBACK_DAYS)
+    if anchor
+    else today - timedelta(days=RULE_LOOKBACK_DAYS)
+  )
+  year_end = date(today.year, 12, 31)
+  horizon = max(today + timedelta(days=project), year_end)
+  # The overlay composes against the FULL committed set (rules supersede
+  # per period against real entries) but only committed dated rows.
+  projection = _compose_projection(
+    [t for t in committed if t.date],
+    load_expected(),
+    load_recurrences(),
+    window_start,
+    horizon,
+  )
+  return _walk(projection, start_checking, start_savings), anchor
+
+
+def open_rows(today: date | None = None) -> list[Transaction]:
+  """The OPEN section's rows (the `confirm` picker's backlog): every
+  projected row dated on or before today — overdue expected entries plus
+  landed-but-unconfirmed rule instances. A view-level read: nothing
+  writes stores."""
+  walk, _anchor = _projection_walk(today or date.today())
+  iso_today = (today or date.today()).isoformat()
+  return [t for t, _c, _s in walk if t.date <= iso_today]
+
+
 def _fmt_state(checking: float | None, savings: float | None) -> str:
   save = f" · spaar €{_fmt(savings)}" if savings is not None else ""
   return f"checking €{_fmt(checking)}{save}"
@@ -267,14 +319,9 @@ def print_ledger_view(days: int, project: int, filter: str | None = None) -> Non
   or id; a VIEW aid only — it limits which rows are shown in both
   windows (actuals + projection), while balances and the footer are
   always computed from the full unfiltered chain."""
-  from financials.model import load_expected
-
   today = date.today()
-  rows = view_rows()
-  committed = [row for row in rows if not row.description.startswith(_STRUCTURAL)]
-  anchor = _anchor_row([t for t in committed if t.date <= today.isoformat()], today)
-  start_checking = anchor.balance_checking if anchor else None
-  start_savings = anchor.balance_savings if anchor else None
+  walk, anchor = _projection_walk(today, project=project)
+  committed = [row for row in view_rows() if not row.description.startswith(_STRUCTURAL)]
 
   # The projection reaches back past the ledger's anchor (the last
   # committed row) by a grace lookback: rule instances between the anchor
@@ -283,24 +330,7 @@ def print_ledger_view(days: int, project: int, filter: str | None = None) -> Non
   # OUT-OF-ORDER commit — a later-dated row committed while an earlier
   # instance is still unconfirmed (e.g. a monthly rule on the 24th, a
   # 09-25 row committed first). No anchor -> grace from today.
-  window_start = (
-    date.fromisoformat(anchor.date) - timedelta(days=RULE_LOOKBACK_DAYS)
-    if anchor
-    else today - timedelta(days=RULE_LOOKBACK_DAYS)
-  )
   window_end = today + timedelta(days=project)
-  year_end = date(today.year, 12, 31)
-  horizon = max(window_end, year_end)
-  # The overlay composes against the FULL committed set (rules supersede
-  # per period against real entries) but only committed dated rows.
-  projection = _compose_projection(
-    [t for t in committed if t.date],
-    load_expected(),
-    load_recurrences(),
-    window_start,
-    horizon,
-  )
-  walk = _walk(projection, start_checking, start_savings)
   # The middle section: every uncommitted row dated on or before today
   # (overdue expected + landed rule instances); the rest is the projection,
   # cut at the --project window (the footer's walk runs to the year end).
@@ -384,7 +414,12 @@ def print_ledger_view(days: int, project: int, filter: str | None = None) -> Non
     else:
       console.print("[dim]Geen rijen in deze vensters.[/dim]")
 
-  footer = _footer_lines(walk, start_checking, start_savings, today)
+  footer = _footer_lines(
+    walk,
+    anchor.balance_checking if anchor else None,
+    anchor.balance_savings if anchor else None,
+    today,
+  )
   if footer:
     console.print()
     for line in footer:

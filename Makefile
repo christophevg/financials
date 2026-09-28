@@ -47,8 +47,6 @@ view: CMD=list
 view: ARGS=--days $(DAYS) --project $(PROJECT) $(if $(FILTER),--filter $(FILTER),)
 view: run
 
-TX?=unknown
-
 add: ## Add a transaction in interactive mode
 add: CMD=add
 add: run
@@ -62,6 +60,13 @@ edit: ## Edit a transaction
 edit: CMD=edit
 edit: ARGS=$(TX)
 edit: run
+
+confirm: ## Confirm an open transaction
+confirm: CMD=confirm
+confirm: ARGS=$(TX)
+confirm: run
+
+# manage recurring transactions
 
 add-recurring: ## Add a recurring transaction
 add-recurring: CMD=recurrence add

@@ -60,6 +60,12 @@ tracked files — source, tests, docs, scripts, and commit messages.
   `make format` (ruff format + autofix) /
   `make run CMD=<subcommand> ARGS="<flags>"`.
 - `view`, `add`, `delete`, `edit`, `report` are thin wrappers over `run`.
+- CLI: `confirm [ID]` = zero-prompt confirm of open entries (landed
+  `e####` / `r:-hash`; committed `t####` = no-op; bare = OPEN-section
+  picker). Fast path; `edit <id>` stays the adjust path. Core:
+  `src/financials/confirm.py`; rule commits go through
+  `recurrence_cli.commit_instance` (shared with edit's interactive
+  confirm); OPEN rows come from `ledger_view.open_rows`.
 - `yoker.toml` allowlist for the make tool: `run` → `[CMD, ARGS]`,
   `test` → `[TEST]`, `lint` → `[LINT_FLAGS]`. Only these env vars are
   allowed.

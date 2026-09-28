@@ -137,6 +137,22 @@ def main() -> None:
     help="Id from 'financials list' (omit to pick from the last 10 actual rows).",
   )
 
+  confirm_parser = sub.add_parser(
+    "confirm",
+    help=(
+      "Confirm an open entry in one go: a landed expected entry (e####) or"
+      " rule instance (r:...) commits as-is, zero prompts. Adjust first:"
+      " 'financials edit'. Bare confirm shows the OPEN section."
+    ),
+  )
+  confirm_parser.add_argument(
+    "id",
+    nargs="?",
+    default=None,
+    metavar="ID",
+    help="Expected entry (e####) or rule instance (r:...) from 'financials list'.",
+  )
+
   list_parser = sub.add_parser(
     "list",
     help="Ledger: actual transactions of the last X days + projection for Y days.",
@@ -235,6 +251,14 @@ def main() -> None:
   elif args.command == "delete":
     try:
       raise SystemExit(delete_transaction(args.id))
+    except KeyboardInterrupt:
+      console.print("[yellow]Geannuleerd (Ctrl-C).[/yellow]")
+      raise SystemExit(0) from None
+  elif args.command == "confirm":
+    from financials.confirm import confirm_transaction
+
+    try:
+      raise SystemExit(confirm_transaction(args.id))
     except KeyboardInterrupt:
       console.print("[yellow]Geannuleerd (Ctrl-C).[/yellow]")
       raise SystemExit(0) from None

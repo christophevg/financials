@@ -19,6 +19,7 @@ and recurring rules) — never from statistical guesswork.
 | `financials add` | Add a transaction — interactive, fully flagged, or shorthand (see below). Future-dated entries go to the expected register automatically. |
 | `financials expect` | Manage one-off future entries (`--date --description --category --amount`, `--list`, `--remove=<id>`). |
 | `financials edit [ID]` / `financials delete [ID]` | Edit or delete a transaction (`t####`) or expected entry (`e####`), with confirmation; changes are replay-checked and journaled. |
+| `financials confirm [ID]` | Confirm an open entry in one go: a landed expected entry (`e####`) or rule instance (`r:...`) commits as-is, zero prompts (the fast path; `edit <id>` is the adjust path). Bare `confirm` shows the OPEN section to pick from. |
 | `financials list --days X --project Y` | Ledger view: actuals of the last X days + projection of the next Y days (expected one-offs + recurring-rule expansions, superseded per period by real entries). |
 | `financials report [--months N] [--year Y] [--top N]` | Visual report: monthly flows, category breakdown, balance curve. |
 

@@ -590,16 +590,63 @@ def _find_instance(entry_id: str) -> tuple[Recurrence, date] | None:
   return None
 
 
-def _confirm_instance(rule_hit: Recurrence, occurrence_date: date) -> int:
-  """Confirm a landed rule instance as a real transaction: prompts prefilled
-  with the instance's values (Enter keeps, 'q' aborts), then a plain
-  AddMutation — the journal records committed money; the instance is
-  virtual. When the committed row does NOT cover the rule's period (drifted
-  amount or out-of-window date), the occurrence is recorded as an exception
-  so the unconfirmed instance doesn't linger in OPEN; a covering commit
-  supersedes it automatically (nothing to record)."""
+def commit_instance(
+  rule_hit: Recurrence,
+  occurrence_date: date,
+  confirmed_date: date,
+  description: str,
+  category: str,
+  amount: float,
+) -> int:
+  """The no-prompt commit core shared by `_confirm_instance` (the values
+  come from the prefilled prompts) and `confirm.py` (the values come from
+  the rule itself): one AddMutation — the journal records committed money;
+  the instance is virtual. When the committed row does NOT cover the
+  rule's period (drifted amount or out-of-window date), the occurrence is
+  recorded as an exception so the unconfirmed instance doesn't linger in
+  OPEN; a covering commit supersedes it automatically (nothing to
+  record)."""
   from financials.commands import cmd_add
 
+  iso = occurrence_date.isoformat()
+  journal = command_journal()
+  _mutation, entry = cmd_add(
+    iso_date=confirmed_date.isoformat(),
+    description=description,
+    category=category,
+    amount=amount,
+    journal=journal,
+  )
+  if entry is None:
+    console.print("[red]Niet bevestigd: de boeking kon niet worden toegepast.[/red]")
+    return 2
+  # No ghost instance: a commit that covers the rule's period supersedes
+  # it in the projection; a drifted commit (amount/date outside the
+  # superseding window) is excepted so the instance leaves OPEN.
+  covered = (
+    category == rule_hit.category
+    and abs(amount - rule_hit.amount) <= AMOUNT_TOLERANCE
+    and abs((confirmed_date - occurrence_date).days) <= DAY_WINDOW
+  )
+  if not covered:
+    rules = load_recurrences()
+    for rule in rules:
+      if rule.description == rule_hit.description and rule.category == rule_hit.category:
+        rule.exceptions = sorted(set(rule.exceptions) | {iso})
+    save_recurrences(rules)
+  balances = entry.balances
+  console.print(
+    f"[green]Bevestigd: {iso} → {entry.id}[/green]  [dim]checking "
+    f"{balances.get('checking', 0.0):,.2f}, spaar "
+    f"{balances.get('savings', 0.0):,.2f}[/dim]"
+  )
+  return 0
+
+
+def _confirm_instance(rule_hit: Recurrence, occurrence_date: date) -> int:
+  """Confirm a landed rule instance as a real transaction: prompts prefilled
+  with the instance's values (Enter keeps, 'q' aborts), then the shared
+  commit core."""
   iso = occurrence_date.isoformat()
   console.print(
     f"[bold]Bevestigen van {rule_hit.description} ({iso})[/bold] "
@@ -635,38 +682,9 @@ def _confirm_instance(rule_hit: Recurrence, occurrence_date: date) -> int:
     console.print("[red]Bedrag 0 is niet toegelaten.[/red]")
     return 2
 
-  journal = command_journal()
-  _mutation, entry = cmd_add(
-    iso_date=confirmed_date.isoformat(),
-    description=description.strip(),
-    category=category,
-    amount=amount,
-    journal=journal,
+  return commit_instance(
+    rule_hit, occurrence_date, confirmed_date, description.strip(), category, amount
   )
-  if entry is None:
-    console.print("[red]Niet bevestigd: de boeking kon niet worden toegepast.[/red]")
-    return 2
-  # No ghost instance: a commit that covers the rule's period supersedes
-  # it in the projection; a drifted commit (amount/date outside the
-  # superseding window) is excepted so the instance leaves OPEN.
-  covered = (
-    category == rule_hit.category
-    and abs(amount - rule_hit.amount) <= AMOUNT_TOLERANCE
-    and abs((confirmed_date - occurrence_date).days) <= DAY_WINDOW
-  )
-  if not covered:
-    rules = load_recurrences()
-    for rule in rules:
-      if rule.description == rule_hit.description and rule.category == rule_hit.category:
-        rule.exceptions = sorted(set(rule.exceptions) | {iso})
-    save_recurrences(rules)
-  balances = entry.balances
-  console.print(
-    f"[green]Bevestigd: {iso} → {entry.id}[/green]  [dim]checking "
-    f"{balances.get('checking', 0.0):,.2f}, spaar "
-    f"{balances.get('savings', 0.0):,.2f}[/dim]"
-  )
-  return 0
 
 def edit_occurrence(entry_id: str) -> int:
   """Edit a projected rule instance by its r:-hash id. A LANDED instance
