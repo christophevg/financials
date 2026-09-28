@@ -16,7 +16,7 @@ from financials.journal import Journal
 from financials.ledger_view import build_view
 from financials.model import STATUS_EXPECTED, Transaction, save_expected
 from financials.recurrences import Recurrence, save_recurrences
-from financials.tui import LedgerTUI
+from financials.tui import KIND_COMMITTED, DetailScreen, LedgerTUI
 
 TEST_TODAY = date(2026, 9, 28)
 
@@ -229,5 +229,64 @@ def test_initial_position_anchored_on_projection(tmp_path, monkeypatch):
       assert table.cursor_row == table.get_row_index("sep-projection")
       assert table.get_row_at(table.cursor_row)[2].plain == "PROJECTIE"
       assert table.scroll_y == 0.0  # 10 context rows → top of the table
+
+  asyncio.run(scenario())
+
+
+def test_enter_opens_detail_dialog(tmp_path, monkeypatch):
+  """Enter on an entry row opens the readonly DetailScreen with the
+  entry's data and its provenance; Esc closes it back to the table."""
+  journal = _isolated(monkeypatch, tmp_path)
+  cmd_add("2026-09-27", "Boodschappen", "Uitgaven", -65.0, journal=journal)
+
+  async def scenario() -> None:
+    app = LedgerTUI(days_back=3, today=TEST_TODAY)
+    async with app.run_test() as pilot:
+      table = app.query_one("#ledger-table")
+      await pilot.pause()
+      # Land on the actual row (no projection in this seed → last row).
+      table.move_cursor(row=table.row_count - 1, scroll=False)
+      await pilot.press("enter")
+      await pilot.pause()
+      # The dialog is the active screen with the entry's details.
+      dialog = app.screen
+      assert isinstance(dialog, DetailScreen)
+      assert dialog._entry[0].description == "Boodschappen"
+      assert dialog._kind == KIND_COMMITTED
+      await pilot.press("escape")
+      await pilot.pause()
+      assert app.screen is not dialog  # back on the ledger view
+
+  asyncio.run(scenario())
+
+
+def test_enter_on_separator_is_a_noop(tmp_path, monkeypatch):
+  """Enter on a section separator row (no entry behind it) does
+  nothing: no dialog, still the ledger view."""
+  journal = _isolated(monkeypatch, tmp_path)
+  cmd_add("2026-09-27", "Boodschappen", "Uitgaven", -65.0, journal=journal)
+  save_expected(
+    [
+      Transaction(
+        id="e9001",
+        date="2026-09-27",
+        description="Cadeau",
+        category="Uitgaven",
+        amount_eur=-25.0,
+        status=STATUS_EXPECTED,
+      )
+    ]
+  )
+
+  async def scenario() -> None:
+    app = LedgerTUI(days_back=3, today=TEST_TODAY)
+    async with app.run_test() as pilot:
+      table = app.query_one("#ledger-table")
+      await pilot.pause()
+      sep_row = table.get_row_index("sep-open")
+      table.move_cursor(row=sep_row, scroll=False)
+      await pilot.press("enter")
+      await pilot.pause()
+      assert not isinstance(app.screen, DetailScreen)
 
   asyncio.run(scenario())

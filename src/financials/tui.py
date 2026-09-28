@@ -1,6 +1,6 @@
-"""The TUI (step 1): a scrollable ledger view — Textual App + DataTable,
-consuming build_view (the same composition as `list`; one composition,
-two renderers).
+"""The TUI (step 1+2): a scrollable ledger view — Textual App +
+DataTable, consuming build_view (the same composition as `list`; one
+composition, two renderers) — plus the step-2 readonly detail dialog.
 
 Keys: up/down (j/k) move the row cursor one row; pageup/pagedown by
 page; home/end jump to the first/last row; q or escape quits. The
@@ -10,6 +10,10 @@ The table holds the FULL committed history above the actuals window;
 the initial view is positioned on the projection: the PROJECTIE row at
 the bottom of the viewport with the 10 rows above it starting at the
 top, so the forecast's near future is what you see first.
+
+Step 2: Enter on an entry row opens the readonly DetailScreen (the
+row's full data + a provenance status line); Esc/q closes it. The
+screen composes from the entry tuple so the editable step reuses it.
 """
 
 from __future__ import annotations
@@ -20,6 +24,8 @@ from rich.markup import escape
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.containers import Container, Grid
+from textual.screen import ModalScreen
 from textual.widgets import DataTable, Static
 from textual.widgets._data_table import RowDoesNotExist
 
@@ -32,6 +38,11 @@ _DASH = "—"
 # must be visible from the top of the viewport.
 _ANCHOR_CONTEXT_ROWS = 10
 
+# Entry provenance for the detail dialog's status line: where the row
+# came from in the view's composition.
+KIND_COMMITTED = "journaal-geboekt"
+KIND_OPEN = "openstaand (geland, niet bevestigd)"
+KIND_PROJECTED = "projectie (verwacht door regel)"
 
 def _balance_text(value: float | None, extra_style: str = "") -> Text:
   """A balance cell: None → em-dash; negatives red (the list view's rule)."""
@@ -83,7 +94,7 @@ class LedgerTable(DataTable):
 
   def selected_id(self) -> str | None:
     """The selected row's entry id (None on section separators) — the
-    step-2 dialogs address rows through this."""
+    dialogs address rows through this."""
     if not self.row_count:
       return None
     row = self.cursor_row
@@ -92,12 +103,81 @@ class LedgerTable(DataTable):
     return None
 
 
+class DetailScreen(ModalScreen[None]):
+  """Readonly detail dialog for one entry (step 2): the row's full data
+  plus a provenance status line. Composed from the entry tuple so the
+  next step (editable) reuses this screen. Esc/q dismisses."""
+
+  BINDINGS = [
+    Binding("escape", "dismiss_screen", "Terug", show=False),
+    Binding("q", "dismiss_screen", "Terug", show=False),
+  ]
+
+  DEFAULT_CSS = """
+  DetailScreen {
+    align: center middle;
+  }
+  #detail-dialog {
+    width: 60;
+    height: auto;
+    max-height: 80%;
+    border: round $accent;
+    background: $surface;
+    padding: 1 2;
+  }
+  #detail-title {
+    text-style: bold;
+  }
+  #detail-grid {
+    grid-size: 2;
+    grid-rows: auto;
+    grid-gutter: 0 1;
+  }
+  #detail-grid Label {
+    width: 1fr;
+  }
+  #detail-status {
+    color: $text-muted;
+    margin-top: 1;
+  }
+  """
+
+  def __init__(self, entry: tuple, kind: str) -> None:
+    super().__init__()
+    self._entry = entry
+    self._kind = kind
+
+  def compose(self) -> ComposeResult:
+    t, checking, savings = _row_of(self._entry)
+    with Container(id="detail-dialog"):
+      yield Static("Transactie", id="detail-title")
+      with Grid(id="detail-grid"):
+        yield Static("Id", classes="label")
+        yield Static(t.id or _DASH)
+        yield Static("Datum", classes="label")
+        yield Static(t.date)
+        yield Static("Omschrijving", classes="label")
+        yield Static(escape(t.description))
+        yield Static("Categorie", classes="label")
+        yield Static(escape(t.category or _DASH))
+        yield Static("Verandering", classes="label")
+        yield Static(_amount_text(t.amount_eur))
+        yield Static("Checking", classes="label")
+        yield Static(_balance_text(checking))
+        yield Static("Spaar", classes="label")
+        yield Static(_balance_text(savings))
+      yield Static(self._kind, id="detail-status")
+
+  def action_dismiss_screen(self) -> None:
+    self.dismiss(None)
+
+
 class LedgerTUI(App[None]):
   """The scrollable ledger (step 1): pinned header, scrollable rows
   filling the terminal height, pinned footer. The table holds the full
   committed history, then OPEN, then the projection to year end (the
   footer's own horizon); the initial view is anchored on the
-  projection's start."""
+  projection's start. Enter on an entry row opens its detail dialog."""
 
   CSS = """
   #kasboek-header {
@@ -127,6 +207,7 @@ class LedgerTUI(App[None]):
     self._today = today
     self._window_start: str = ""
     self._view: ViewRows | None = None
+    self._entries: dict[str, tuple] = {}
 
   def compose(self) -> ComposeResult:
     yield Static("", id="kasboek-header")
@@ -161,6 +242,7 @@ class LedgerTUI(App[None]):
     OPEN, PROJECTIE."""
     table = self.query_one("#ledger-table", LedgerTable)
     window_start = self._window_start
+    self._entries = {}
 
     history_rows: list[tuple] = [
       (t, t.balance_checking, t.balance_savings) for t in view.history
@@ -175,10 +257,15 @@ class LedgerTUI(App[None]):
         )
     history_rows.sort(key=lambda row: (row[0].date, row[0].id))
     for row in history_rows:
-      self._add_entry(table, row, style="")
+      self._add_entry(table, row, style="", kind=KIND_COMMITTED)
 
     for t in view.actuals:
-      self._add_entry(table, (t, t.balance_checking, t.balance_savings), style="")
+      self._add_entry(
+        table,
+        (t, t.balance_checking, t.balance_savings),
+        style="",
+        kind=KIND_COMMITTED,
+      )
     for rollup, members in view.rollups:
       member_ids = {m.id for m in members}
       if not any(t.id in member_ids for t in view.actuals):
@@ -187,15 +274,16 @@ class LedgerTUI(App[None]):
         table,
         (rollup, rollup.balance_checking, rollup.balance_savings),
         style="",
+        kind=KIND_COMMITTED,
       )
     if view.open:
       self._add_section(table, "OPEN", "sep-open")
       for row in view.open:
-        self._add_entry(table, row, style="")
+        self._add_entry(table, row, style="", kind=KIND_OPEN)
     if view.future:
       self._add_section(table, "PROJECTIE", "sep-projection")
       for row in view.future:
-        self._add_entry(table, row, style="dim")
+        self._add_entry(table, row, style="dim", kind=KIND_PROJECTED)
 
     count = len(table.row_ids)
     if count:
@@ -242,14 +330,28 @@ class LedgerTUI(App[None]):
     table.scroll_to(x=0, y=top, animate=False)
     table.move_cursor(row=anchor, scroll=False)
 
+  def on_data_table_row_selected(
+    self, event: DataTable.RowSelected
+  ) -> None:
+    """Enter on a row: open the readonly detail dialog for the entry
+    (no-op on section separators, whose ids aren't in _entries)."""
+    row_key = event.row_key.value
+    entry = self._entries.get(row_key) if row_key else None
+    if entry is None:
+      return
+    _, _, _, kind = entry
+    self.push_screen(DetailScreen(entry[:3], kind))
+
   def _add_entry(
     self,
     table: LedgerTable,
     row: tuple,
     style: str,
+    kind: str,
   ) -> None:
     """One entry → seven styled cells; the row key is the entry id (the
-    address step 2 uses)."""
+    address step 2 uses); _entries maps it to (entry, checking,
+    savings, kind) for the detail dialog."""
     t, checking, savings = _row_of(row)
     table.add_row(
       Text(t.id, style=f"{style} dim".strip()),
@@ -262,6 +364,8 @@ class LedgerTUI(App[None]):
       key=t.id or None,
     )
     table.row_ids.append(t.id or None)
+    if t.id:
+      self._entries[t.id] = (t, checking, savings, kind)
 
   def _add_section(self, table: LedgerTable, label: str, key: str) -> None:
     """A section-label row (label in the Omschrijving column, as `list`

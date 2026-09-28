@@ -73,14 +73,14 @@ tracked files — source, tests, docs, scripts, and commit messages.
   Consumes `ledger_view.build_view` (the composition as data — one
   composition, `list` and TUI both render from it; knobs: `days_back`,
   `projection_horizon`, `today` for tests). The table holds the FULL
-  committed history (build_view's `history` list, ascending); the
-  cursor anchors on the first actual row of the default window (last
-  `days_back` days), and ↑/k walks back through history to the first
-  transaction. Keys ↑/↓ j/k, PgUp/PgDn, Home/End, q/Esc. Initial
+  committed history (build_view's `history` list, ascending); initial
   position: PROJECTIE separator at the viewport bottom with the 10 rows
-  above it from the top (no projection → last row); the cursor rests on
-  that anchor. Step-2 hooks already in place: `LedgerTable.selected_id()`
-  returns the selected entry id (None on separators).
+  above it from the top (no projection → last row); cursor rests on
+  the anchor. Keys ↑/↓ j/k, PgUp/PgDn, Home/End, q/Esc. Step 2 (in):
+  Enter opens the readonly `DetailScreen` (full row data + provenance
+  status; `_entries` maps row-key id → (entry, checking, savings,
+  kind)); Esc/q closes. The dialog composes from the entry tuple — the
+  editable step reuses this screen.
 - CLI: `confirm [ID]` = zero-prompt confirm of open entries (landed
   `e####` / `r:-hash`; committed `t####` = no-op; `g####` = group
   multi-confirm; bare = OPEN-section picker). Fast path; `edit <id>`
