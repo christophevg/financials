@@ -111,6 +111,67 @@ def test_find_group_prefix(tmp_path, monkeypatch):
   assert find_group(load_groups(), "zz") is None
 
 
+def test_find_group_by_name(tmp_path, monkeypatch):
+  """Names address groups: case-insensitive exact, then unique prefix;
+  ambiguous name prefixes match nothing (ids stay canonical)."""
+  _isolate(tmp_path, monkeypatch)
+  save_groups(
+    [
+      Group(id="g0001", label="Mastercard september"),
+      Group(id="g0002", label="Visa"),
+    ]
+  )
+  groups = load_groups()
+  assert find_group(groups, "mastercard september").id == "g0001"  # exact, any case
+  assert find_group(groups, "Mastercard september").id == "g0001"
+  assert find_group(groups, "Visa").id == "g0002"
+  assert find_group(groups, "master").id == "g0001"  # unique name prefix
+  # id prefixes still win before names are consulted
+  assert find_group(groups, "g0") is None  # ambiguous id prefix: no silent guess
+  assert find_group(groups, "visa x") is None  # no match anywhere
+
+
+def test_add_member_by_group_name(tmp_path, monkeypatch):
+  _isolate(tmp_path, monkeypatch)
+  save_expected([_expected_entry()])
+  groups_mod.create_group("Mastercard september")
+  assert groups_mod.add_member("mastercard september", "e9001") == 0
+  assert load_groups()[0].members == ["e9001"]
+
+
+def test_add_member_variadic_all_or_nothing(tmp_path, monkeypatch):
+  """Multiple ids in one go; ONE unknown id -> nothing added."""
+  _isolate(tmp_path, monkeypatch)
+  save_expected([_expected_entry(), _expected_entry(id="e9002", amount_eur=-2.0)])
+  groups_mod.create_group("Mastercard")
+  assert groups_mod.add_member("g0001", "e9001", "e9002") == 0
+  assert load_groups()[0].members == ["e9001", "e9002"]
+  # all-or-nothing: unknown id in the batch leaves membership untouched
+  assert groups_mod.add_member("g0001", "e9998", "e9999") == 2
+  assert load_groups()[0].members == ["e9001", "e9002"]
+  # idempotent re-add of an existing member is not an error
+  assert groups_mod.add_member("g0001", "e9001") == 0
+  assert load_groups()[0].members == ["e9001", "e9002"]
+
+
+def test_remove_member_variadic(tmp_path, monkeypatch):
+  _isolate(tmp_path, monkeypatch)
+  save_expected(
+    [
+      _expected_entry(id="e9001", amount_eur=-1.0),
+      _expected_entry(id="e9002", amount_eur=-2.0),
+      _expected_entry(id="e9003", amount_eur=-3.0),
+    ]
+  )
+  groups_mod.create_group("Mastercard")
+  groups_mod.add_member("g0001", "e9001", "e9002", "e9003")
+  assert groups_mod.remove_member("g0001", "e9001", "e9002") == 0
+  assert load_groups()[0].members == ["e9003"]
+  # non-members are no-ops, not errors
+  assert groups_mod.remove_member("g0001", "e9001") == 0
+  assert load_groups()[0].members == ["e9003"]
+
+
 # --- resolve_member ---------------------------------------------------------
 
 

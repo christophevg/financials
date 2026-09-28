@@ -79,16 +79,27 @@ def _next_id(groups: list[Group]) -> str:
   return f"g{highest + 1:04d}"
 
 
-def find_group(groups: list[Group], id_or_prefix: str) -> Group | None:
-  """Exact id first, then unique prefix (the recurrence-pick idiom)."""
-  needle = (id_or_prefix or "").strip()
+def find_group(groups: list[Group], id_or_name: str) -> Group | None:
+  """Exact id first, then unique id prefix, then the group NAME
+  (case-insensitive exact, then unique case-insensitive prefix) —
+  `group add Mastercard e0016` addresses the group by name. Ambiguous
+  prefixes (two groups 'Mastercard september'/'Mastercard oktober') match
+  nothing: ids stay the canonical address."""
+  needle = (id_or_name or "").strip()
   if not needle:
     return None
   exact = next((g for g in groups if g.id == needle), None)
   if exact is not None:
     return exact
   hits = [g for g in groups if g.id.startswith(needle)]
-  return hits[0] if len(hits) == 1 else None
+  if len(hits) == 1:
+    return hits[0]
+  lowered = needle.lower()
+  by_label = [g for g in groups if g.label.lower() == lowered]
+  if len(by_label) == 1:
+    return by_label[0]
+  by_prefix = [g for g in groups if g.label.lower().startswith(lowered)]
+  return by_prefix[0] if len(by_prefix) == 1 else None
 
 
 def resolve_member(member_id: str) -> Transaction | None:
@@ -265,40 +276,46 @@ def create_group(
   return 0
 
 
-def add_member(group_id: str, member_id: str) -> int:
-  """Add a row to a group's membership (the row itself is untouched)."""
+def add_member(group_id: str, *member_ids: str) -> int:
+  """Add rows to a group's membership (the rows themselves are untouched).
+  All-or-nothing: one unknown id -> nothing is added; already-members
+  are idempotent no-ops (not errors)."""
   group = _resolve_group(group_id)
   if group is None:
     return 2
-  t = resolve_member(member_id)
-  if t is None:
-    console.print(f"[red]Onbekende id: {member_id}[/red]")
-    return 2
   groups = load_groups()
   group = next(g for g in groups if g.id == group.id)
-  if member_id in group.members:
-    console.print(f"[dim]{member_id} zit al in {group.id}.[/dim]")
+  unknown = [m for m in member_ids if resolve_member(m) is None]
+  if unknown:
+    console.print(
+      "[red]Onbekende id's (niets toegevoegd): " + ", ".join(unknown) + "[/red]"
+    )
+    return 2
+  fresh = [m for m in member_ids if m not in group.members]
+  if not fresh:
+    console.print(f"[dim]Alles zit al in {group.id}.[/dim]")
     return 0
-  group.members.append(member_id)
+  group.members.extend(fresh)
   save_groups(groups)
-  console.print(f"[green]Toegevoegd: {member_id} → {group.id} ({group.label})[/green]")
+  console.print(f"[green]Toegevoegd: {', '.join(fresh)} → {group.id} ({group.label})[/green]")
   return 0
 
 
-def remove_member(group_id: str, member_id: str) -> int:
-  """Remove a row from a group's membership: un-group only, the row
-  itself survives in its own store."""
+def remove_member(group_id: str, *member_ids: str) -> int:
+  """Remove rows from a group's membership: un-group only, the rows
+  themselves survive in their own stores. Idempotent on non-members."""
   group = _resolve_group(group_id)
   if group is None:
     return 2
-  if member_id not in group.members:
-    console.print(f"[dim]{member_id} zit niet in {group.id}.[/dim]")
-    return 0
   groups = load_groups()
   group = next(g for g in groups if g.id == group.id)
-  group.members = [m for m in group.members if m != member_id]
+  present = [m for m in member_ids if m in group.members]
+  if not present:
+    console.print(f"[dim]Niets te verwijderen in {group.id}.[/dim]")
+    return 0
+  group.members = [m for m in group.members if m not in present]
   save_groups(groups)
-  console.print(f"[green]Verwijderd uit groep: {member_id} ← {group.id}[/green]")
+  console.print(f"[green]Verwijderd uit groep: {', '.join(present)} ← {group.id}[/green]")
   return 0
 
 

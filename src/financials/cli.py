@@ -179,7 +179,13 @@ def main() -> None:
     nargs="?",
     default=None,
     metavar="ID",
-    help="Row id for add/remove (t####, e####, r:...).",
+    help="Row id for add/remove (t####, e####, r:...); multiple allowed.",
+  )
+  group_parser.add_argument(
+    "member_ids",
+    nargs="*",
+    default=[],
+    help="Additional row ids for add/remove.",
   )
   group_parser.add_argument(
     "--date",
@@ -325,12 +331,12 @@ def main() -> None:
       )
     elif action == "add":
       if not args.group_id or not args.member_id:
-        group_parser.error("add requires a group id and a row id")
-      raise SystemExit(groups_cli.add_member(args.group_id, args.member_id))
+        group_parser.error("add requires a group (id or name) and one or more row ids")
+      raise SystemExit(groups_cli.add_member(args.group_id, args.member_id, *args.member_ids))
     elif action == "remove":
       if not args.group_id or not args.member_id:
-        group_parser.error("remove requires a group id and a row id")
-      raise SystemExit(groups_cli.remove_member(args.group_id, args.member_id))
+        group_parser.error("remove requires a group (id or name) and one or more row ids")
+      raise SystemExit(groups_cli.remove_member(args.group_id, args.member_id, *args.member_ids))
     elif action == "edit":
       if not args.group_id:
         group_parser.error("edit requires a group id (g####)")
