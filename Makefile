@@ -34,6 +34,10 @@ FINANCIALS=uv run financials
 run: ## `make run ARGS="report --months 6"` or `make CMD=report ARGS="--months 6"`)
 	$(FINANCIALS) $(CMD) $(ARGS)
 
+tui: ## Run the financials TUI
+tui: CMD=tui
+tui: run
+
 report: ## Visual report (usage: make report ARGS="--months 6")
 report: CMD=report
 report: run
