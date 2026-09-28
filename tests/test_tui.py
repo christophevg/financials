@@ -166,8 +166,8 @@ def test_history_scrolls_in_above_the_window(tmp_path, monkeypatch):
       # open rows, no projection in this seed). Journaled ids are
       # content hashes; assert the Datum column per position instead.
       assert table.row_count == 2
-      assert table.get_row_at(0)[1].plain == "2026-09-20"
-      assert table.get_row_at(1)[1].plain == "2026-09-27"
+      assert table.get_row_at(0)[0].plain == "2026-09-20"
+      assert table.get_row_at(1)[0].plain == "2026-09-27"
       # No PROJECTIE section here: the anchor is the last row, so the
       # cursor starts there (the 10-rows-above rule clamps at the top).
       assert table.cursor_row == 1
@@ -227,8 +227,11 @@ def test_initial_position_anchored_on_projection(tmp_path, monkeypatch):
       assert table.row_count == 10
       # The anchor: the PROJECTIE separator's row index.
       assert table.cursor_row == table.get_row_index("sep-projection")
-      assert table.get_row_at(table.cursor_row)[2].plain == "PROJECTIE"
-      assert table.scroll_y == 0.0  # 10 context rows → top of the table
+      assert table.get_row_at(table.cursor_row)[1].plain == "PROJECTIE"
+      # Line-based positioning: 11 lines above the anchor (2-line
+      # rows), minus the 10-line context → top_line 1, snapped to a
+      # row start → 0 (row 0 spans lines 0-1).
+      assert table.scroll_y == 0.0
 
   asyncio.run(scenario())
 

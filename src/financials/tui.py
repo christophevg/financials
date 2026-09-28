@@ -11,6 +11,17 @@ the initial view is positioned on the projection: the PROJECTIE row at
 the bottom of the viewport with the 10 rows above it starting at the
 top, so the forecast's near future is what you see first.
 
+Row design: every entry row is TWO lines tall — the Datum column
+holds the date; the merged second column holds the id (line 1, dim)
+and "description / category" (line 2); the amount and the two
+balances are their own single-line columns. Section separators stay
+one line (label in the merged column). The merged column FILLS: the
+other columns stay content-sized and it takes every remaining cell
+(fit_columns — DataTable has no flex columns), so the numbers end
+flush at the right edge. Rows are mixed-height (add_row height=2);
+only the initial-position scroll math needs line offsets — cursor,
+keys and dialogs stay row-based.
+
 Step 2: Enter on an entry row opens the readonly DetailScreen (the
 row's full data + a provenance status line); Esc/q closes it. The
 screen composes from the entry tuple so the editable step reuses it.
@@ -22,9 +33,11 @@ from datetime import date, timedelta
 
 from rich.markup import escape
 from rich.text import Text
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Grid
+from textual.geometry import Size
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Static
 from textual.widgets._data_table import RowDoesNotExist
@@ -34,15 +47,18 @@ from financials.model import Transaction
 
 _DASH = "—"
 
-# The initial view: rows above the anchor (PROJECTIE separator) that
-# must be visible from the top of the viewport.
-_ANCHOR_CONTEXT_ROWS = 10
+# The initial view: lines above the anchor (PROJECTIE separator) that
+# must be visible from the top of the viewport. Line-based because
+# entry rows are 2 lines tall (10 lines ≈ 5 rows of recent context)
+# and the offset must never cut a row at the viewport top.
+_ANCHOR_CONTEXT_LINES = 10
 
 # Entry provenance for the detail dialog's status line: where the row
 # came from in the view's composition.
 KIND_COMMITTED = "journaal-geboekt"
 KIND_OPEN = "openstaand (geland, niet bevestigd)"
 KIND_PROJECTED = "projectie (verwacht door regel)"
+
 
 def _balance_text(value: float | None, extra_style: str = "") -> Text:
   """A balance cell: None → em-dash; negatives red (the list view's rule)."""
@@ -71,7 +87,9 @@ def _row_of(item: Transaction | tuple) -> tuple:
 
 class LedgerTable(DataTable):
   """DataTable with the ledger's key map: a row cursor, j/k aliases and
-  Home/End jumping the cursor to the first/last row."""
+  Home/End jumping the cursor to the first/last row — plus the fill
+  layout (fit_columns): the entry column takes every remaining cell so
+  the numeric columns end flush at the right edge."""
 
   BINDINGS = [
     Binding("j", "cursor_down", "Down", show=False),
@@ -101,6 +119,48 @@ class LedgerTable(DataTable):
     if 0 <= row < len(self.row_ids):
       return self.row_ids[row]
     return None
+
+  def fit_columns(self) -> None:
+    """Layout: every column except the merged Transactie column keeps
+    its content width (Datum included — it must count against the
+    budget, else the total overflows the viewport and the last column
+    is pushed out of sight); the merged column takes every remaining
+    cell so the numeric columns end flush at the right edge. DataTable
+    has no flex columns — mechanism: pin the fixed columns' widths,
+    size the merged column against the table's scrollable width (never
+    below its content width), and refit virtual_size."""
+    if not self.columns:
+      return
+    columns = self.ordered_columns
+    entry_col = columns[1]
+    used = 0
+    for col in columns:
+      if col is entry_col:
+        continue
+      col.auto_width = False
+      col.width = col.content_width
+      used += col.get_render_width(self)
+    entry_col.auto_width = False
+    # avail already includes the entry column's 2×cell_padding share
+    # (every get_render_width carries it) — subtract it so the total
+    # render width equals the viewport exactly and no horizontal
+    # scrollbar appears.
+    entry_col.width = max(
+      self.scrollable_content_region.width - used - 2 * self.cell_padding,
+      entry_col.content_width,
+    )
+    self.virtual_size = Size(
+      entry_col.get_render_width(self) + used, self.virtual_size.height
+    )
+    self.scroll_x = 0.0
+
+  def _on_resize(self, event: events.Resize) -> None:
+    super()._on_resize(event)
+    self.fit_columns()
+
+  def _on_show(self, event: events.Show) -> None:
+    super()._on_show(event)
+    self.fit_columns()
 
 
 class DetailScreen(ModalScreen[None]):
@@ -215,14 +275,15 @@ class LedgerTUI(App[None]):
     self._window_start: str = ""
     self._view: ViewRows | None = None
     self._entries: dict[str, tuple] = {}
+    # Line heights per table row (entries 2, separators 1) — the
+    # line-based scroll math in _position_at.
+    self._row_heights: list[int] = []
 
   def compose(self) -> ComposeResult:
     yield Static("", id="kasboek-header")
     table = LedgerTable(id="ledger-table")
-    table.add_column("Id", key="id")
     table.add_column("Datum", key="date")
-    table.add_column("Omschrijving", key="description")
-    table.add_column("Categorie", key="category")
+    table.add_column("Transactie", key="entry")
     table.add_column("Verandering", key="change")
     table.add_column("Checking", key="checking")
     table.add_column("Spaar", key="savings")
@@ -250,6 +311,7 @@ class LedgerTUI(App[None]):
     table = self.query_one("#ledger-table", LedgerTable)
     window_start = self._window_start
     self._entries = {}
+    self._row_heights = []
 
     history_rows: list[tuple] = [
       (t, t.balance_checking, t.balance_savings) for t in view.history
@@ -306,8 +368,11 @@ class LedgerTUI(App[None]):
     lines.append(f"[dim]{hint}[/dim]")
     self.query_one("#kasboek-footer", Static).update("\n".join(lines))
 
+    # Column fit needs the final layout: refit once after refresh, then
+    # position (a terminal resize refits via _on_resize).
+    table.call_after_refresh(table.fit_columns)
     # Initial position: the PROJECTIE row at the bottom of the viewport
-    # with the 10 rows above it starting at the top (clamped at the
+    # with the 10 lines above it starting at the top (clamped at the
     # table top; no PROJECTIE → the table end). The cursor sits on that
     # row, so ↓ continues from what you see.
     anchor = self._initial_anchor_row(table)
@@ -326,15 +391,26 @@ class LedgerTUI(App[None]):
       return table.row_count - 1
 
   def _position_at(self, table: LedgerTable, anchor: int) -> None:
-    """Scroll so `anchor` sits at the bottom of the viewport with the
-    `_ANCHOR_CONTEXT_ROWS` rows above it starting at the top (clamped
-    at the table top; a short table simply shows from row 0), and move
-    the row cursor onto the anchor."""
+    """Scroll so `anchor` sits in view with `_ANCHOR_CONTEXT_LINES`
+    lines above it, snapped to a row start so no row is cut at the top
+    (clamped at the table top), and move the row cursor onto the
+    anchor."""
     if not table.row_count:
       return
     anchor = max(0, min(anchor, table.row_count - 1))
-    top = max(0, anchor - _ANCHOR_CONTEXT_ROWS)
-    table.scroll_to(x=0, y=top, animate=False)
+    # Rows are mixed-height (entries 2 lines, separators 1): the scroll
+    # offset is a LINE offset — the lines above the anchor minus the
+    # context we want to keep visible.
+    anchor_line = sum(self._row_heights[:anchor])
+    top_line = max(0, anchor_line - _ANCHOR_CONTEXT_LINES)
+    # Snap up to the start line of the row containing top_line so the
+    # top row is never cut mid-row (shows that full row, never less).
+    start = 0
+    for height in self._row_heights:
+      if start + height > top_line:
+        break
+      start += height
+    table.scroll_to(x=0, y=start, animate=False)
     table.move_cursor(row=anchor, scroll=False)
 
   def on_data_table_row_selected(
@@ -356,38 +432,40 @@ class LedgerTUI(App[None]):
     style: str,
     kind: str,
   ) -> None:
-    """One entry → seven styled cells; the row key is the entry id (the
-    address step 2 uses); _entries maps it to (entry, checking,
-    savings, kind) for the detail dialog."""
+    """One entry → one TWO-line row: the Datum column plus a merged
+    second column (id on line 1, dim; "description / category" on
+    line 2); the amount and the two balances are their own single-line
+    columns. The row key is the entry id (the address step 2 uses);
+    _entries maps it to (entry, checking, savings, kind) for the
+    detail dialog."""
     t, checking, savings = _row_of(row)
+    base = style or ""
+    merged = Text(style=base)
+    if t.id:
+      merged.append(t.id, style="dim")
+    merged.append(f"\n{t.description}")
+    if t.category:
+      merged.append(f" / {t.category}")
     table.add_row(
-      Text(t.id, style=f"{style} dim".strip()),
-      Text(t.date, style=style or ""),
-      Text(t.description, style=style or ""),
-      Text(t.category, style=style or ""),
-      _amount_text(t.amount_eur, style),
-      _balance_text(checking, style),
-      _balance_text(savings, style),
+      Text(t.date, style=base),
+      merged,
+      _amount_text(t.amount_eur, base),
+      _balance_text(checking, base),
+      _balance_text(savings, base),
       key=t.id or None,
+      height=2,
     )
     table.row_ids.append(t.id or None)
+    self._row_heights.append(2)
     if t.id:
       self._entries[t.id] = (t, checking, savings, kind)
 
   def _add_section(self, table: LedgerTable, label: str, key: str) -> None:
-    """A section-label row (label in the Omschrijving column, as `list`
-    renders it); not an entry — row_ids keeps None for it."""
-    table.add_row(
-      "",
-      "",
-      Text(label, style="bold"),
-      "",
-      "",
-      "",
-      "",
-      key=key,
-    )
+    """A section-label row (label in the Transactie column); not an
+    entry — row_ids keeps None for it."""
+    table.add_row("", Text(label, style="bold"), key=key)
     table.row_ids.append(None)
+    self._row_heights.append(1)
 
 
 def run_tui(days_back: int = 3) -> None:
