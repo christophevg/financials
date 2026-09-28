@@ -191,12 +191,12 @@ def rollup_date(group: Group, rows: list[Transaction]) -> date:
 
 def group_rollup(group: Group, rows: list[Transaction]) -> Transaction:
   """The virtual rollup row standing in for the group's members:
-  id = the group id (g####), description = ⧉ label (count), amount =
+  id = the group id (g####), description = 📁 label (count), amount =
   the member sum."""
   return Transaction(
     id=group.id,
     date=rollup_date(group, rows).isoformat(),
-    description=f"⧉ {group.label} ({len(rows)})",
+    description=f"📁 {group.label} ({len(rows)})",
     category_raw=group.category,
     category=group.category,
     amount_eur=round(sum(t.amount_eur or 0.0 for t in rows), 2),

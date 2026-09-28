@@ -57,7 +57,7 @@ tracked files — source, tests, docs, scripts, and commit messages.
   dataclass in `groups.py`, ids `g####`; members resolve across the three
   id families via `groups.resolve_member`; NOT journaled (organization
   metadata like rules/expected). The view hides members and shows one
-  `⧉ <label> (n)` rollup at the rollup date (group's own date, else
+  `📁 <label> (n)` rollup at the rollup date (group's own date, else
   members' max) — uncommitted members re-time the total there; fully
   committed groups roll up display-only in the actuals window.
   `confirm <g-id>` multi-confirms landed members and re-points e-ids.
