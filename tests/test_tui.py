@@ -218,8 +218,11 @@ def test_add_dialog_layout_pairs_are_unshifted(tmp_path, monkeypatch):
       await pilot.pause()
       assert ac.display  # dropdown open
       assert dialog.region.y == y_before  # the form did not move
-      # Visible rows capped at 5 (library default is 12).
-      assert ac.option_list.size.height == 5
+      # Visible rows capped at 1 (owner tuning, 2026-09-28: only the
+      # best fuzzy match shows — zero vertical shift in the real
+      # terminal, and typing 1-2 letters + Enter enters the category
+      # fastest; the library default was 12).
+      assert ac.option_list.size.height == 1
 
   asyncio.run(scenario())
 

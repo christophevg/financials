@@ -156,7 +156,7 @@ class AddScreen(ModalScreen[str | None]):
     position: absolute;
   }
   #add-category-ac AutoCompleteList {
-    max-height: 5;
+    max-height: 1;
   }
   #add-error {
     height: auto;
