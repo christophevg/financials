@@ -99,8 +99,20 @@ def TODAY() -> date:
 
 _WEEKDAY_ALIASES: dict[str, int] = {
   # Dutch + English, 0 = Monday (date.weekday())
-  "ma": 0, "di": 1, "wo": 2, "do": 3, "vr": 4, "za": 5, "zo": 6,
-  "mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6,
+  "ma": 0,
+  "di": 1,
+  "wo": 2,
+  "do": 3,
+  "vr": 4,
+  "za": 5,
+  "zo": 6,
+  "mon": 0,
+  "tue": 1,
+  "wed": 2,
+  "thu": 3,
+  "fri": 4,
+  "sat": 5,
+  "sun": 6,
 }
 
 _WEEKDAY_NAMES = ["ma", "di", "wo", "do", "vr", "za", "zo"]
@@ -202,9 +214,7 @@ def list_recurrences() -> int:
     elif rule.frequency == "yearly":
       frequency = f"jaarlijks {rule.month or 1:02d}-{rule.day or 1:02d}"
     else:  # weekly / biweekly
-      weekday = (
-        _WEEKDAY_NAMES[date.fromisoformat(rule.start).weekday()] if rule.start else "?"
-      )
+      weekday = _WEEKDAY_NAMES[date.fromisoformat(rule.start).weekday()] if rule.start else "?"
       prefix = "wekelijks" if rule.frequency == "weekly" else "tweewekelijks"
       frequency = f"{prefix} ({weekday})"
     upcoming = ", ".join(_next_instances(rule, count=3)) or "—"
@@ -232,8 +242,9 @@ def list_recurrences() -> int:
 # --- add -----------------------------------------------------------------
 
 
-def _prompt_missing(description: str | None, category: str | None, amount: float | None,
-                    frequency: str | None) -> tuple[str, str, float, str] | None:
+def _prompt_missing(
+  description: str | None, category: str | None, amount: float | None, frequency: str | None
+) -> tuple[str, str, float, str] | None:
   """Fill missing add-fields interactively. Returns (description, category,
   amount, frequency) or None on abort. Fully-flagged invocations never
   prompt (non-interactive use stays non-interactive)."""
@@ -259,9 +270,7 @@ def _prompt_missing(description: str | None, category: str | None, amount: float
       console.print("[red]Ongeldig bedrag (0 is niet toegelaten).[/red]")
       return None
   if frequency is None:
-    frequency = Prompt.ask(
-      "Frequentie (monthly/yearly/weekly/biweekly)", default="monthly"
-    )
+    frequency = Prompt.ask("Frequentie (monthly/yearly/weekly/biweekly)", default="monthly")
     if frequency == "q":
       return None
     frequency = frequency.strip().lower() or "monthly"
@@ -297,9 +306,7 @@ def _seeded_field_loop(
   if new_amount is None:
     console.print("[red]Ongeldig bedrag (0 is niet toegelaten).[/red]")
     return None
-  new_frequency = Prompt.ask(
-    "Frequentie (monthly/yearly/weekly/biweekly)", default=frequency
-  )
+  new_frequency = Prompt.ask("Frequentie (monthly/yearly/weekly/biweekly)", default=frequency)
   if new_frequency == "q":
     return None
   new_frequency = new_frequency.strip().lower() or frequency
@@ -308,9 +315,7 @@ def _seeded_field_loop(
     # instances anchor on start (its weekday is the schedule); typing a
     # bare weekday name (ma/di/wo/do/vr/za/zo or mon..sun) snaps start
     # forward to that weekday; an ISO date becomes the anchor directly.
-    anchor_text = Prompt.ask(
-      "Weekdag (ma/di/wo/do/vr/za/zo, Enter = houd start)", default=""
-    )
+    anchor_text = Prompt.ask("Weekdag (ma/di/wo/do/vr/za/zo, Enter = houd start)", default="")
     if anchor_text == "q":
       return None
     new_day = day  # meaningless for weekly/biweekly; kept as-is
@@ -400,9 +405,7 @@ def add_recurrence(
     if weekday:
       start = _snap_to_weekday(start, weekday_text=weekday) or start
     elif interactive:
-      anchor_text = Prompt.ask(
-        "Weekdag (ma/di/wo/do/vr/za/zo, Enter = houd start)", default=""
-      )
+      anchor_text = Prompt.ask("Weekdag (ma/di/wo/do/vr/za/zo, Enter = houd start)", default="")
       if anchor_text == "q":
         return 2
   if frequency == "yearly" and interactive and month is None:
@@ -686,6 +689,7 @@ def _confirm_instance(rule_hit: Recurrence, occurrence_date: date) -> int:
     rule_hit, occurrence_date, confirmed_date, description.strip(), category, amount
   )
 
+
 def edit_occurrence(entry_id: str) -> int:
   """Edit a projected rule instance by its r:-hash id. A LANDED instance
   (date <= today) offers: (1) edit the RULE or (2) confirm THIS instance
@@ -793,6 +797,7 @@ def suppress_occurrence(entry_id: str) -> int:
   )
   return 0
 
+
 # --- detect --------------------------------------------------------------
 
 
@@ -849,8 +854,10 @@ def detect_recurrences(min_occurrences: int = 3) -> int:
       proposal["start"],
     )
   console.print(table)
-  console.print("[dim]Niets is aangemaakt. Een voorstel overnemen: 'financials recurrence add' "
-                "— of met nummer: 'financials recurrence detect --take N'.[/dim]")
+  console.print(
+    "[dim]Niets is aangemaakt. Een voorstel overnemen: 'financials recurrence add' "
+    "— of met nummer: 'financials recurrence detect --take N'.[/dim]"
+  )
   return 0
 
 

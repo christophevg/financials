@@ -220,7 +220,11 @@ def test_weekly_instances_anchor_on_start():
   rows = expand_recurrences([rule], [], date(2026, 10, 1), date(2026, 10, 31))
   # anchors: Oct 1 + k*7 -> 01, 08, 15, 22, 29
   assert [r.date for r in rows] == [
-    "2026-10-01", "2026-10-08", "2026-10-15", "2026-10-22", "2026-10-29",
+    "2026-10-01",
+    "2026-10-08",
+    "2026-10-15",
+    "2026-10-22",
+    "2026-10-29",
   ]
 
 
@@ -229,7 +233,11 @@ def test_biweekly_instances_anchor_on_start():
   rule.start = "2026-10-01"
   rows = expand_recurrences([rule], [], date(2026, 10, 1), date(2026, 11, 30))
   assert [r.date for r in rows] == [
-    "2026-10-01", "2026-10-15", "2026-10-29", "2026-11-12", "2026-11-26",
+    "2026-10-01",
+    "2026-10-15",
+    "2026-10-29",
+    "2026-11-12",
+    "2026-11-26",
   ]
 
 
@@ -309,8 +317,7 @@ def test_add_biweekly_prompted_path_gets_start_from_today(monkeypatch, capsys):
   # (anchor/start/end answered via Enter)
   _answers(monkeypatch, ["biweekly", "", "", ""])
   assert (
-    recurrence_cli.add_recurrence(description="Stripboeken", category="Eten", amount=-12.0)
-    == 0
+    recurrence_cli.add_recurrence(description="Stripboeken", category="Eten", amount=-12.0) == 0
   )
   rules = load_recurrences()
   assert len(rules) == 1
@@ -526,9 +533,11 @@ def test_detect_rejects_irregular_spacing():
 
 
 def test_detect_yearly_spacing():
-  txs = [_tx("2024-12-24", description="Kerstmis", category="Cadeaus", amount=-100.0),
-         _tx("2025-12-24", description="Kerstmis", category="Cadeaus", amount=-100.0),
-         _tx("2026-12-24", description="Kerstmis", category="Cadeaus", amount=-100.0)]
+  txs = [
+    _tx("2024-12-24", description="Kerstmis", category="Cadeaus", amount=-100.0),
+    _tx("2025-12-24", description="Kerstmis", category="Cadeaus", amount=-100.0),
+    _tx("2026-12-24", description="Kerstmis", category="Cadeaus", amount=-100.0),
+  ]
   proposals = detect_candidates(txs, min_occurrences=3)
   assert len(proposals) == 1
   assert proposals[0]["frequency"] == "yearly"
@@ -573,9 +582,12 @@ def _isolated_rules(tmp_path, monkeypatch):
 
 
 def test_add_and_list_roundtrip(capsys):
-  assert recurrence_cli.add_recurrence(
-    description="Huur", category="Wonen", amount=-800.0, frequency="monthly", day=1
-  ) == 0
+  assert (
+    recurrence_cli.add_recurrence(
+      description="Huur", category="Wonen", amount=-800.0, frequency="monthly", day=1
+    )
+    == 0
+  )
   assert recurrence_cli.list_recurrences() == 0
   out = capsys.readouterr().out
   assert "Huur" in out
@@ -635,10 +647,7 @@ def test_add_yearly_prompts_for_day_and_month(monkeypatch):
   # month -> start -> end (Enter keeps the pinned-today defaults).
   _answers(monkeypatch, ["yearly", "15", "12", "", ""])
   assert (
-    recurrence_cli.add_recurrence(
-      description="Woningpolis", category="Wonen", amount=-893.93
-    )
-    == 0
+    recurrence_cli.add_recurrence(description="Woningpolis", category="Wonen", amount=-893.93) == 0
   )
   rules = load_recurrences()
   assert rules[0].frequency == "yearly"
@@ -651,9 +660,7 @@ def test_add_yearly_prompts_for_day_and_month(monkeypatch):
 def test_add_yearly_default_day_and_month_are_pinned_today(monkeypatch):
   # Enter everywhere: defaults = pinned TODAY's day (21) and month (9)
   _answers(monkeypatch, ["yearly", "", "", "", ""])
-  assert (
-    recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 0
-  )
+  assert recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 0
   rules = load_recurrences()
   assert rules[0].day == 21
   assert rules[0].month == 9
@@ -662,17 +669,13 @@ def test_add_yearly_default_day_and_month_are_pinned_today(monkeypatch):
 
 def test_add_yearly_day_prompt_q_aborts(monkeypatch):
   _answers(monkeypatch, ["yearly", "q"])
-  assert (
-    recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 2
-  )
+  assert recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 2
   assert load_recurrences() == []
 
 
 def test_add_yearly_rejects_out_of_range_day_answer(monkeypatch, capsys):
   _answers(monkeypatch, ["yearly", "35"])
-  assert (
-    recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 2
-  )
+  assert recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 2
   assert load_recurrences() == []
   assert "Ongeldige dag" in capsys.readouterr().out
 
@@ -680,17 +683,13 @@ def test_add_yearly_rejects_out_of_range_day_answer(monkeypatch, capsys):
 def test_add_yearly_month_prompt_q_aborts(monkeypatch):
   # day answered via Enter (default 21), then q at the month question
   _answers(monkeypatch, ["yearly", "", "q"])
-  assert (
-    recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 2
-  )
+  assert recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 2
   assert load_recurrences() == []
 
 
 def test_add_yearly_rejects_out_of_range_month_answer(monkeypatch, capsys):
   _answers(monkeypatch, ["yearly", "", "13"])
-  assert (
-    recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 2
-  )
+  assert recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 2
   assert load_recurrences() == []
   assert "Ongeldige maand" in capsys.readouterr().out
 
@@ -698,9 +697,7 @@ def test_add_yearly_rejects_out_of_range_month_answer(monkeypatch, capsys):
 def test_add_monthly_prompts_for_day(monkeypatch):
   # monthly gets the same day question (seeded-loop parity)
   _answers(monkeypatch, ["monthly", "5", "", ""])
-  assert (
-    recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 0
-  )
+  assert recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 0
   rules = load_recurrences()
   assert rules[0].frequency == "monthly"
   assert rules[0].day == 5
@@ -709,17 +706,13 @@ def test_add_monthly_prompts_for_day(monkeypatch):
 
 def test_add_monthly_day_prompt_q_aborts(monkeypatch):
   _answers(monkeypatch, ["monthly", "q"])
-  assert (
-    recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 2
-  )
+  assert recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 2
   assert load_recurrences() == []
 
 
 def test_add_monthly_rejects_out_of_range_day_answer(monkeypatch, capsys):
   _answers(monkeypatch, ["monthly", "0"])
-  assert (
-    recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 2
-  )
+  assert recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 2
   assert load_recurrences() == []
   assert "Ongeldige dag" in capsys.readouterr().out
 
@@ -728,9 +721,7 @@ def test_add_monthly_typed_start_and_end(monkeypatch):
   # start/end parity: a typed ISO start replaces the today-default and an
   # ISO end is recorded; the first instance lands on the start itself.
   _answers(monkeypatch, ["monthly", "1", "2026-10-01", "2027-09-30"])
-  assert (
-    recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 0
-  )
+  assert recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 0
   rules = load_recurrences()
   assert rules[0].start == "2026-10-01"
   assert rules[0].end == "2027-09-30"
@@ -739,17 +730,13 @@ def test_add_monthly_typed_start_and_end(monkeypatch):
 
 def test_add_monthly_start_prompt_q_aborts(monkeypatch):
   _answers(monkeypatch, ["monthly", "1", "q"])
-  assert (
-    recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 2
-  )
+  assert recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 2
   assert load_recurrences() == []
 
 
 def test_add_monthly_end_prompt_q_aborts(monkeypatch):
   _answers(monkeypatch, ["monthly", "1", "", "q"])
-  assert (
-    recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 2
-  )
+  assert recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 2
   assert load_recurrences() == []
 
 
@@ -757,9 +744,7 @@ def test_add_monthly_invalid_start_answer_rejected_by_validation(monkeypatch, ca
   # a non-ISO start passes the prompt (no parse there, like the seeded
   # loop) and is caught by _validate before saving
   _answers(monkeypatch, ["monthly", "1", "nonsense"])
-  assert (
-    recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 2
-  )
+  assert recurrence_cli.add_recurrence(description="X", category="Wonen", amount=-10.0) == 2
   assert load_recurrences() == []
   assert "ongeldige start-datum" in capsys.readouterr().out
 
@@ -770,8 +755,7 @@ def test_add_weekly_prompted_path_asks_weekday_anchor(monkeypatch):
   # "vr" on 2026-09-21 (pinned TODAY, a Monday) → start 2026-09-25.
   _answers(monkeypatch, ["weekly", "vr", "", ""])
   assert (
-    recurrence_cli.add_recurrence(description="Boodschappen", category="Eten", amount=-45.0)
-    == 0
+    recurrence_cli.add_recurrence(description="Boodschappen", category="Eten", amount=-45.0) == 0
   )
   rules = load_recurrences()
   assert rules[0].frequency == "weekly"
@@ -781,9 +765,7 @@ def test_add_weekly_prompted_path_asks_weekday_anchor(monkeypatch):
 def test_add_weekly_typed_start_is_snapped_to_anchor(monkeypatch):
   # typed start 2026-09-22 (a Tuesday) + anchor "vr" -> snapped to Friday
   _answers(monkeypatch, ["weekly", "vr", "2026-09-22", ""])
-  assert (
-    recurrence_cli.add_recurrence(description="X", category="Eten", amount=-45.0) == 0
-  )
+  assert recurrence_cli.add_recurrence(description="X", category="Eten", amount=-45.0) == 0
   assert load_recurrences()[0].start == "2026-09-25"
 
 
@@ -1235,9 +1217,7 @@ def test_confirm_landed_instance_with_drifted_amount_excepts(monkeypatch, capsys
 
   ledger = load_ledger(command_journal())
   landed = [
-    t
-    for t in ledger.transactions
-    if t.description == "Huur" and t.date == date(2026, 9, 1)
+    t for t in ledger.transactions if t.description == "Huur" and t.date == date(2026, 9, 1)
   ]
   assert len(landed) == 1
   assert landed[0].postings == {"checking": -750.0}

@@ -78,9 +78,7 @@ def test_confirm_expected_landed(tmp_path, monkeypatch):
   code = module.confirm_transaction("e9001")
   assert code == 0
   confirmed = [
-    t
-    for t in load_ledger(Journal(journal_path)).transactions
-    if t.description == "Cadeau"
+    t for t in load_ledger(Journal(journal_path)).transactions if t.description == "Cadeau"
   ]
   assert len(confirmed) == 1
   assert confirmed[0].postings == {"checking": -750.0}
@@ -91,9 +89,7 @@ def test_confirm_expected_landed(tmp_path, monkeypatch):
 def test_confirm_expected_future_refused(tmp_path, monkeypatch):
   journal_path = _isolate(tmp_path, monkeypatch)
   _seed(journal_path)
-  save_expected(
-    [_expected_entry(id="e9002", date=(date.today() + timedelta(days=3)).isoformat())]
-  )
+  save_expected([_expected_entry(id="e9002", date=(date.today() + timedelta(days=3)).isoformat())])
   code = module.confirm_transaction("e9002")
   assert code == 2
   # untouched: still expected, nothing committed
@@ -161,9 +157,7 @@ def test_confirm_rule_instance_landed(tmp_path, monkeypatch):
   code = module.confirm_transaction(instance_id(rule, occurrence))
   assert code == 0
   confirmed = [
-    t
-    for t in load_ledger(Journal(journal_path)).transactions
-    if t.description == "Huur"
+    t for t in load_ledger(Journal(journal_path)).transactions if t.description == "Huur"
   ]
   assert len(confirmed) == 1
   assert confirmed[0].postings == {"checking": -500.0}
@@ -175,9 +169,7 @@ def test_confirm_rule_instance_future_refused(tmp_path, monkeypatch):
   journal_path = _isolate(tmp_path, monkeypatch)
   _seed(journal_path)
   future = (date.today() + timedelta(days=3)).isoformat()
-  save_recurrences(
-    [_monthly_rule(description="Str", frequency="weekly", day=None, start=future)]
-  )
+  save_recurrences([_monthly_rule(description="Str", frequency="weekly", day=None, start=future)])
   rule = load_recurrences()[0]
   rid = instance_id(rule, date.fromisoformat(future))
   assert _find_instance(rid) is not None  # resolvable, but...

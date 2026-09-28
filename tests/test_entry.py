@@ -129,7 +129,10 @@ def test_add_expected_still_requires_an_amount(tmp_path, capsys):
 
   future = (date.today() + timedelta(days=5)).isoformat()
   code = add_expected(
-    iso_date=future, description="X", category="Eten", amount=None  # type: ignore[arg-type]
+    iso_date=future,
+    description="X",
+    category="Eten",
+    amount=None,  # type: ignore[arg-type]
   )
   assert code == 2
   assert "bedrag ontbreekt" in capsys.readouterr().out

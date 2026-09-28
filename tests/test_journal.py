@@ -409,9 +409,7 @@ def test_checkpoint_agrees_with_fold_on_real_journal(tmp_path):
   # 2026-09-26 lesson: entries[-1] was a LATER-dated row, the tip was the
   # backdated confirm — same data, unlike rows, false divergence).
   assert persisted["tip"] == fold_tip
-  for persisted_row, folded_row in zip(
-    persisted["entries"], folded.transactions, strict=True
-  ):
+  for persisted_row, folded_row in zip(persisted["entries"], folded.transactions, strict=True):
     assert persisted_row["id"] == folded_row.id
     assert persisted_row["balances"] == folded_row.balances
 

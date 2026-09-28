@@ -290,9 +290,7 @@ def test_print_ledger_view_shows_openstaand_section(tmp_path, monkeypatch, capsy
 
   journal = Journal(tmp_path / "journal.jsonl")
   monkeypatch.setattr(lv, "command_journal", lambda: journal)
-  monkeypatch.setattr(
-    "financials.model.expected_file", lambda: tmp_path / "expected.json"
-  )
+  monkeypatch.setattr("financials.model.expected_file", lambda: tmp_path / "expected.json")
   monkeypatch.setattr(
     "financials.recurrences.recurrences_file", lambda: tmp_path / "recurrences.json"
   )
@@ -342,9 +340,7 @@ def test_print_ledger_view_shows_openstaand_section(tmp_path, monkeypatch, capsy
   assert "2026-10-15" in out
 
 
-def test_open_section_reaches_back_past_an_out_of_order_anchor(
-  tmp_path, monkeypatch
-):
+def test_open_section_reaches_back_past_an_out_of_order_anchor(tmp_path, monkeypatch):
   """Regression (owner report, 2026-09-26): a monthly rule on the 24th is
   unconfirmed, but a LATER-dated row (09-25) is committed first — the
   anchor moved past the instance, which hid it from OPEN. The grace
@@ -360,9 +356,7 @@ def test_open_section_reaches_back_past_an_out_of_order_anchor(
 
   journal = Journal(tmp_path / "journal.jsonl")
   monkeypatch.setattr(lv, "command_journal", lambda: journal)
-  monkeypatch.setattr(
-    "financials.model.expected_file", lambda: tmp_path / "expected.json"
-  )
+  monkeypatch.setattr("financials.model.expected_file", lambda: tmp_path / "expected.json")
   monkeypatch.setattr(
     "financials.recurrences.recurrences_file", lambda: tmp_path / "recurrences.json"
   )
