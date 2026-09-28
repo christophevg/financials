@@ -118,27 +118,33 @@ class DetailScreen(ModalScreen[None]):
     align: center middle;
   }
   #detail-dialog {
-    width: 60;
+    width: 60%;
     height: auto;
-    max-height: 80%;
-    border: round $accent;
-    background: $surface;
+    max-height: 60%;
+    border: round $primary;
+    background: white;
     padding: 1 2;
   }
   #detail-title {
     text-style: bold;
   }
   #detail-grid {
-    grid-size: 2;
-    grid-rows: auto;
-    grid-gutter: 0 1;
+    layout: grid;
+    grid-size: 2 5;
+    height: 5;
+    grid-rows: 1fr 1fr;
   }
-  #detail-grid Label {
-    width: 1fr;
+  #balance-grid {
+    layout: grid;
+    grid-size: 2 2;
+    height: 2;
+    grid-rows: 1fr 1fr;
+    margin-top: 2;
+    color: $text-muted;
   }
   #detail-status {
     color: $text-muted;
-    margin-top: 1;
+    margin-top: 0;
   }
   """
 
@@ -151,6 +157,7 @@ class DetailScreen(ModalScreen[None]):
     t, checking, savings = _row_of(self._entry)
     with Container(id="detail-dialog"):
       yield Static("Transactie", id="detail-title")
+      yield Static(self._kind, id="detail-status")
       with Grid(id="detail-grid"):
         yield Static("Id", classes="label")
         yield Static(t.id or _DASH)
@@ -162,11 +169,11 @@ class DetailScreen(ModalScreen[None]):
         yield Static(escape(t.category or _DASH))
         yield Static("Verandering", classes="label")
         yield Static(_amount_text(t.amount_eur))
+      with Grid(id="balance-grid"):
         yield Static("Checking", classes="label")
         yield Static(_balance_text(checking))
         yield Static("Spaar", classes="label")
         yield Static(_balance_text(savings))
-      yield Static(self._kind, id="detail-status")
 
   def action_dismiss_screen(self) -> None:
     self.dismiss(None)
