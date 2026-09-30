@@ -1,10 +1,10 @@
 """Tests: financials confirm — the zero-prompt confirm of open entries.
 
 Covers the resolver branches (committed no-op, expected commit,
-rule-instance commit), the future-dated refusals, the unknown id, the
-drifted-commit exception recording, and the bare picker. All stores are
-isolated via conftest (journal + expected) and a recurrences_file patch
-here — no real store is ever touched.
+rule-instance commit incl. the interactive future-instance path with a
+shiftable datum), the drifted-commit exception recording, and the bare
+picker. All stores are isolated via conftest (journal + expected) and a
+recurrences_file patch here — no real store is ever touched.
 """
 
 from datetime import date, timedelta
@@ -30,11 +30,32 @@ from financials.recurrences import (
 
 def _isolate(tmp_path, monkeypatch):
   """conftest already points the journal and the expected store at tmp;
-  add the recurrences store (not covered by conftest)."""
+  add the recurrences store (not covered by conftest). Category
+  prompting is neutralized (questionary reads stdin, pytest capture
+  forbids it): the confirm walk takes the category from this stub."""
   rec_path = tmp_path / "recurrences.json"
   save_recurrences([], path=rec_path)
   monkeypatch.setattr("financials.recurrences.recurrences_file", lambda: rec_path)
+  monkeypatch.setattr(
+    "financials.recurrence_cli.ask_category", lambda current="": "Huis"
+  )
   return tmp_path / "journal.jsonl"
+
+
+def _answers(monkeypatch, answers: list[str]):
+  """Prompt.ask stub returning the given answers in order (repeats the
+  last one when exhausted). Empty string = Enter = the prompt's default
+  (same shape as test_recurrences.py's helper)."""
+  index = {"i": 0}
+
+  def ask(*args, **kwargs):
+    answer = answers[min(index["i"], len(answers) - 1)]
+    index["i"] += 1
+    if answer == "":
+      return kwargs.get("default", "")
+    return answer
+
+  monkeypatch.setattr("rich.prompt.Prompt.ask", ask)
 
 
 def _seed(journal):
@@ -166,15 +187,64 @@ def test_confirm_rule_instance_landed(tmp_path, monkeypatch):
 
 
 def test_confirm_rule_instance_future_refused(tmp_path, monkeypatch):
+  """Future instance + 'q' at the first prompt (or any abort): nothing
+  committed, no exception (was: unconditional exit-2 refusal before the
+  interactive future-confirm existed)."""
   journal_path = _isolate(tmp_path, monkeypatch)
   _seed(journal_path)
   future = (date.today() + timedelta(days=3)).isoformat()
   save_recurrences([_monthly_rule(description="Str", frequency="weekly", day=None, start=future)])
   rule = load_recurrences()[0]
   rid = instance_id(rule, date.fromisoformat(future))
-  assert _find_instance(rid) is not None  # resolvable, but...
+  assert _find_instance(rid) is not None  # resolvable
+  _answers(monkeypatch, ["q"])  # abort at the datum prompt
   code = module.confirm_transaction(rid)
-  assert code == 2  # ...refused: not money yet
+  assert code == 2  # aborted: nothing happened
+  committed = load_ledger(Journal(journal_path)).transactions
+  assert [t for t in committed if t.description == "Str"] == []
+  assert load_recurrences()[0].exceptions == []
+
+
+def test_confirm_rule_instance_future_shifts_date(tmp_path, monkeypatch):
+  """THE early-landed flow: future instance, confirm interactively with
+  the datum pulled back to today — the actual books at today, and the
+  small shift stays inside DAY_WINDOW so the commit supersedes the
+  instance (no exception; the rule keeps its normal schedule)."""
+  journal_path = _isolate(tmp_path, monkeypatch)
+  _seed(journal_path)
+  future = (date.today() + timedelta(days=3)).isoformat()
+  save_recurrences([_monthly_rule(description="Str", frequency="weekly", day=None, start=future)])
+  rule = load_recurrences()[0]
+  rid = instance_id(rule, date.fromisoformat(future))
+  # datum = today, omschrijving Enter (category via the patched
+  # ask_category stub, no slot; bedrag keeps via repeated last answer)
+  _answers(monkeypatch, [date.today().isoformat(), ""])
+  code = module.confirm_transaction(rid)
+  assert code == 0
+  committed = load_ledger(Journal(journal_path)).transactions
+  landed = [t for t in committed if t.description == "Str"]
+  assert len(landed) == 1
+  assert landed[0].date == date.today()  # journal rows carry date objects
+  assert landed[0].postings == {"checking": -500.0}
+  # inside DAY_WINDOW + same amount/category: superseded, NOT excepted
+  assert load_recurrences()[0].exceptions == []
+
+
+def test_confirm_rule_instance_future_keeps_future_date_refused(
+  tmp_path, monkeypatch, capsys
+):
+  """The future-date gate: keeping the still-future default (or typing a
+  future date) is refused — an actual never lies ahead of today."""
+  journal_path = _isolate(tmp_path, monkeypatch)
+  _seed(journal_path)
+  future = (date.today() + timedelta(days=3)).isoformat()
+  save_recurrences([_monthly_rule(description="Str", frequency="weekly", day=None, start=future)])
+  rule = load_recurrences()[0]
+  rid = instance_id(rule, date.fromisoformat(future))
+  _answers(monkeypatch, [""])  # Enter = keep the future date
+  code = module.confirm_transaction(rid)
+  assert code == 2
+  assert "nooit in de toekomst" in capsys.readouterr().out
   committed = load_ledger(Journal(journal_path)).transactions
   assert [t for t in committed if t.description == "Str"] == []
   assert load_recurrences()[0].exceptions == []

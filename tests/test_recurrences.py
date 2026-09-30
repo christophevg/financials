@@ -950,10 +950,11 @@ def test_edit_occurrence_option_2_creates_expected_exception(monkeypatch, tmp_pa
   occurrence = date(2026, 10, 1)
   instance_hash = instance_id(rule, occurrence)
 
-  # choice 2, then the seeded loop: description Enter, amount -700, rest
-  # Enter (category via the patched ask_category, no slot; frequency is
-  # kept via default)
-  _answers(monkeypatch, ["2", "", "-700", "", "", "", ""])
+  # choice 2, then the slim occurrence loop (datum FIRST): datum Enter
+  # (keeps 2026-10-01), omschrijving Enter, amount -700, rest none —
+  # category via the patched ask_category, no slot; frequency/day/month/
+  # end are never asked.
+  _answers(monkeypatch, ["2", "", "", "-700"])
   assert recurrence_cli.edit_occurrence(instance_hash) == 0
   # expected entry created from the edited values
   expected_rows = load_expected()
@@ -964,6 +965,63 @@ def test_edit_occurrence_option_2_creates_expected_exception(monkeypatch, tmp_pa
   assert load_recurrences()[0].exceptions == ["2026-10-01"]
   out = capsys.readouterr().out
   assert "uitzondering" in out
+
+
+def test_edit_occurrence_option_2_moves_the_datum(monkeypatch, capsys):
+  """Datum is the FIRST question of the slim occurrence loop (moving it
+  is the usual reason to edit a single instance) and typing a new date
+  moves the expected row; the ORIGINAL instance date joins the rule's
+  exceptions, so the projection shows only the replacement."""
+  from financials.expected import load_expected
+  from financials.recurrences import instance_id
+
+  recurrence_cli.add_recurrence(
+    description="Huur", category="Wonen", amount=-800.0, frequency="monthly", day=1
+  )
+  rule = load_recurrences()[0]
+  instance_hash = instance_id(rule, date(2026, 10, 1))
+
+  # choice 2, then the slim loop: datum 2026-10-05, omschrijving Enter
+  # (category via the patched ask_category, no slot; bedrag keeps via
+  # repeated last answer "")
+  _answers(monkeypatch, ["2", "2026-10-05", ""])
+  assert recurrence_cli.edit_occurrence(instance_hash) == 0
+  expected_rows = load_expected()
+  assert len(expected_rows) == 1
+  assert expected_rows[0].date == "2026-10-05"  # moved, not the rule's day 1
+  assert expected_rows[0].amount_eur == -800.0
+  assert load_recurrences()[0].exceptions == ["2026-10-01"]
+  out = capsys.readouterr().out
+  assert "uitzondering" in out
+
+
+def test_edit_occurrence_option_2_drops_dead_questions(monkeypatch, capsys):
+  """Frequentie, dag and end are never asked (they are discarded for a
+  one-off exception): the walk ends at Bedrag — exactly 4 Prompt.ask
+  calls (menu, datum, omschrijving, bedrag; category is the no-slot
+  stub). Proven by counting, not by answer slots."""
+  from financials.expected import load_expected
+  from financials.recurrences import instance_id
+
+  recurrence_cli.add_recurrence(
+    description="Huur", category="Wonen", amount=-800.0, frequency="monthly", day=1
+  )
+  rule = load_recurrences()[0]
+  instance_hash = instance_id(rule, date(2026, 10, 1))
+  calls = {"n": 0}
+
+  def counting_ask(*args, **kwargs):
+    calls["n"] += 1
+    if calls["n"] == 1:
+      return "2"  # the occurrence-edit menu
+    return kwargs.get("default", "")  # Enter everywhere → all values kept
+
+  monkeypatch.setattr("rich.prompt.Prompt.ask", counting_ask)
+  assert recurrence_cli.edit_occurrence(instance_hash) == 0
+  assert calls["n"] == 4
+  assert load_expected()[0].date == "2026-10-01"
+  assert load_expected()[0].amount_eur == -800.0
+  assert load_recurrences()[0].exceptions == ["2026-10-01"]
 
 
 def test_edit_occurrence_unknown_id_is_a_noop_2(monkeypatch):

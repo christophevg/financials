@@ -649,7 +649,9 @@ def commit_instance(
 def _confirm_instance(rule_hit: Recurrence, occurrence_date: date) -> int:
   """Confirm a landed rule instance as a real transaction: prompts prefilled
   with the instance's values (Enter keeps, 'q' aborts), then the shared
-  commit core."""
+  commit core. Also the interactive path for FUTURE instances (from
+  confirm.py): the date may shift DOWN to today, but a confirmed date in
+  the future is refused — an actual never lies ahead of today."""
   iso = occurrence_date.isoformat()
   console.print(
     f"[bold]Bevestigen van {rule_hit.description} ({iso})[/bold] "
@@ -663,6 +665,13 @@ def _confirm_instance(rule_hit: Recurrence, occurrence_date: date) -> int:
     confirmed_date = date.fromisoformat(date_text.strip())
   except ValueError:
     console.print(f"[red]Ongeldige datum: {date_text!r}[/red]")
+    return 2
+  if confirmed_date > TODAY():
+    console.print(
+      "[red]Niet bevestigd: een actual ligt nooit in de toekomst — typ de "
+      "werkelijke datum (op of vóór vandaag), of pas de regel aan met "
+      "'financials edit'.[/red]"
+    )
     return 2
   description = Prompt.ask("Omschrijving", default=rule_hit.description)
   if description.strip() == "q":
@@ -689,6 +698,50 @@ def _confirm_instance(rule_hit: Recurrence, occurrence_date: date) -> int:
     rule_hit, occurrence_date, confirmed_date, description.strip(), category, amount
   )
 
+
+def _occurrence_exception_loop(
+  title: str,
+  description: str,
+  category: str,
+  amount: float,
+  frequency: str,
+  start: str,
+) -> Recurrence | None:
+  """Slimmed seeded loop for the occurrence-edit 'expected-exception'
+  path: Datum FIRST (the usual reason to edit a single instance — move
+  it), then omschrijving/categorie/bedrag. Frequentie, dag, maand and
+  end are never asked: add_expected only consumes start, description,
+  category and amount (frequency rides along solely to shape the
+  returned Recurrence). Same conventions as _seeded_field_loop and
+  _confirm_instance: Enter = houden, 'q' = annuleren (returns None).
+  Invalid ISO datums pass through to add_expected's own rejection."""
+  console.print(f"[bold]{title}[/bold] [dim](Enter = houden, 'q' = annuleren)[/dim]")
+  start_text = Prompt.ask("Datum (YYYY-MM-DD)", default=start)
+  if start_text == "q":
+    return None
+  new_start = start_text.strip() or start
+  new_description = Prompt.ask("Omschrijving", default=description)
+  if new_description == "q":
+    return None
+  new_category = ask_category(current=category)
+  if new_category == ABORT or new_category is None:
+    return None
+  amount_text = Prompt.ask("Bedrag", default=f"{amount:g}")
+  if amount_text == "q":
+    return None
+  new_amount = _parse_amount(amount_text)
+  if new_amount is None:
+    console.print("[red]Ongeldig bedrag (0 is niet toegelaten).[/red]")
+    return None
+  return Recurrence(
+    description=new_description.strip() or description,
+    category=new_category,
+    amount=new_amount,
+    frequency=frequency,
+    day=None,
+    month=None,
+    start=new_start,
+  )
 
 def edit_occurrence(entry_id: str) -> int:
   """Edit a projected rule instance by its r:-hash id. A LANDED instance
@@ -721,16 +774,13 @@ def edit_occurrence(entry_id: str) -> int:
   if choice == "1":
     return edit_recurrence(rule_hit.description)
   if choice == "2":
-    edited = _seeded_field_loop(
+    edited = _occurrence_exception_loop(
       f"Uitzondering op {rule_hit.description} ({occurrence_date.isoformat()})",
       rule_hit.description,
       rule_hit.category,
       rule_hit.amount,
       rule_hit.frequency,
-      occurrence_date.day,
-      rule_hit.month,
       occurrence_date.isoformat(),
-      "",
     )
     if edited is None:
       console.print("[dim]Geannuleerd — niets gewijzigd.[/dim]")

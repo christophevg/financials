@@ -95,23 +95,23 @@ def _confirm_expected(t: Transaction) -> int:
 
 
 def _confirm_instance(entry_id: str) -> int:
-  """Zero-prompt confirm of a landed rule instance: commit with the
-  rule's own values (date = the occurrence date); a covering commit
-  supersedes the instance automatically, nothing to record."""
-  from financials.recurrence_cli import _find_instance, commit_instance
+  """Confirm a rule instance (r:-hash). LANDED instances commit
+  zero-prompt with the rule's own values (a covering commit supersedes
+  the instance automatically, nothing to record). A FUTURE instance
+  opens the prefilled prompts (the same walk as edit's landed branch:
+  datum first, shiftable down to today) so an early-landed bill can be
+  confirmed interactively; recurrence_cli's own future-date gate
+  refuses an actual dated ahead of today."""
+  from financials import recurrence_cli
 
-  hit = _find_instance(entry_id)
+  hit = recurrence_cli._find_instance(entry_id)
   if hit is None:
     return 2  # not a rule instance: the caller reports the unknown id
   rule_hit, occurrence_date = hit
-  if occurrence_date > date.today():
-    console.print(
-      f"[yellow]{entry_id} is nog toekomst ({occurrence_date.isoformat()}) "
-      "— niets bevestigd. Niet gewenste instantie: 'financials delete "
-      f"{entry_id}' onderdrukt ze.[/yellow]"
-    )
-    return 2
-  return commit_instance(
+  if occurrence_date > recurrence_cli.TODAY():
+    # future instance: interactive confirm — datum first, Enter keeps
+    return recurrence_cli._confirm_instance(rule_hit, occurrence_date)
+  return recurrence_cli.commit_instance(
     rule_hit,
     occurrence_date,
     occurrence_date,
