@@ -328,22 +328,16 @@ class LedgerTUI(App[None]):
     refresh (the post-save behavior); without it the initial anchor
     positioning applies."""
     table = self.query_one("#ledger-table", LedgerTable)
-    window_start = self._window_start
     table.clear()  # a post-save rebuild must not duplicate rows
     table.row_ids = []  # clear() doesn't touch the parallel id list
     self._entries = {}
     self._row_heights = []
 
+    # History-band rollups come pre-merged into view.history by
+    # build_view (in-window rollups are seated in view.actuals).
     history_rows: list[tuple] = [
       (t, t.balance_checking, t.balance_savings) for t in view.history
     ]
-    for rollup, _members in view.rollups:
-      # Rollups dated before the actuals window band into history; the
-      # actuals gate below renders the rest (in the window only).
-      if rollup.date < window_start:
-        history_rows.append(
-          (rollup, rollup.balance_checking, rollup.balance_savings)
-        )
     history_rows.sort(key=lambda row: (row[0].date, row[0].id))
     for row in history_rows:
       self._add_entry(table, row, style="", kind=KIND_COMMITTED)
@@ -355,16 +349,9 @@ class LedgerTUI(App[None]):
         style="",
         kind=KIND_COMMITTED,
       )
-    for rollup, _members in view.rollups:
-      today = self._today or date.today()
-      if not window_start <= rollup.date <= today.isoformat():
-        continue
-      self._add_entry(
-        table,
-        (rollup, rollup.balance_checking, rollup.balance_savings),
-        style="",
-        kind=KIND_COMMITTED,
-      )
+    # Rollup rows are already seated inside view.actuals (in-window) or
+    # view.history (pre-window, placed by build_view) — the TUI places
+    # nothing itself anymore.
     if view.open:
       self._add_section(table, "OPEN", "sep-open")
       for row in view.open:

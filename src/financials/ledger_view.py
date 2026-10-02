@@ -345,9 +345,12 @@ def _committed_rollups(committed: list[Transaction]):
   """Display-only rollup rows for groups whose members are all committed:
   (rollup_row, member_rows). The actuals table shows the single rollup
   instead of the member rows (the ledger itself is untouched); balances
-  are the last member's (the total has already landed there). Partially
-  committed groups are skipped here: their committed members still show
-  individually while the unconfirmed rest rolls up in OPEN/PROJECTIE."""
+  are the CHAIN-LAST member's (the total has already landed there) —
+  member_rows stays in the caller's chain order (the ledger's list is
+  chain-ordered; re-sorting by (date, id) would pick the wrong member's
+  balance for same-date rows). Partially committed groups are skipped
+  here: their committed members still show individually while the
+  unconfirmed rest rolls up in OPEN/PROJECTIE."""
   from financials.groups import group_rollup, load_groups
 
   out = []
@@ -355,7 +358,6 @@ def _committed_rollups(committed: list[Transaction]):
     member_rows = [t for t in committed if t.id in set(group.members)]
     if not member_rows or len(member_rows) != len(group.members):
       continue  # empty or partially committed/unresolvable: no historical rollup
-    member_rows.sort(key=lambda t: (t.date, t.id))
     rollup = group_rollup(group, member_rows)
     rollup.status = STATUS_ACTUAL
     rollup.date = max(t.date for t in member_rows)
@@ -440,31 +442,47 @@ def build_view(
       or needle in (row.id or "").lower()
     )
 
-  committed_shown = [t for t in committed if matches(t)]
   open_rows = [(t, c, s) for t, c, s in open_rows if matches(t)]
   future = [(t, c, s) for t, c, s in future if matches(t)]
+  window_days = days_back if days_back is not None else days
+  window_start = today - timedelta(days=window_days)
   # Display-only historical rollups: groups whose members are ALL committed
-  # collapse into one row in the actuals window (the ledger is untouched).
+  # collapse into one row (the ledger is untouched). Seating (below) walks
+  # the FULL committed chain in order: when the chain index hits a
+  # member's seat value, the rollup row is emitted INSTEAD of the chain
+  # row — the rollup lands exactly at the chain position of its LAST
+  # member (the point where the total landed), so whatever chained after
+  # it (a Bankkosten committed after the members) renders below it,
+  # exactly as the ledger orders it, and the balance column stays
+  # seamless (the rollup's balance IS the seat member's, carried from
+  # _committed_rollups). Non-seat members vanish (hidden_committed); a
+  # needle-filtered member still holds its seat (the filter is a VIEW
+  # aid — balances and position never move for a filter). The emit
+  # decides its band by the EMITTED row's date (rollup date = max member
+  # dates): before the window start → history (the TUI's band), else the
+  # actuals window (both renderers consume them pre-seated; no renderer
+  # placement loop anymore).
   fully_committed_rollups = _committed_rollups(committed)
   hidden_committed = {
     member.id for _rollup, members in fully_committed_rollups for member in members
   }
-  committed_shown = [t for t in committed_shown if t.id not in hidden_committed]
-  window_days = days_back if days_back is not None else days
-  window_start = today - timedelta(days=window_days)
-  actuals = [
-    t for t in committed_shown if window_start <= date.fromisoformat(t.date) <= today
-  ]
-  # The TUI's continuous history: every committed row OLDER than the
-  # window start (ascending). `list` never renders it; the TUI renders
-  # it above the actuals window so scrolling up reaches the first
-  # transaction. Fully-committed rollups with rollup date in history
-  # interleave here (collapsed); their members stay hidden from the
-  # chain via hidden_committed.
-  history = [
-    t for t in committed_shown if date.fromisoformat(t.date) < window_start
-  ]
-  history.sort(key=lambda t: (t.date, t.id))
+  committed_ids = {t.id: i for i, t in enumerate(committed)}
+  seat_map: dict[int, Transaction] = {}
+  for rollup, members in fully_committed_rollups:
+    seat_map[committed_ids[members[-1].id]] = rollup
+  seat_members = {members[-1].id for _rl, members in fully_committed_rollups}
+  history: list[Transaction] = []
+  actuals: list[Transaction] = []
+  for i, row in enumerate(committed):
+    if row.id in hidden_committed and row.id not in seat_members:
+      continue  # a non-seat member: the rollup speaks for it
+    if not matches(row) and i not in seat_map:
+      continue  # needle-filtered non-seat row
+    emit = seat_map.get(i, row)
+    if date.fromisoformat(emit.date) < window_start:
+      history.append(emit)
+    else:
+      actuals.append(emit)
   footer = _footer_lines(
     walk,
     anchor.balance_checking if anchor else None,
@@ -474,7 +492,7 @@ def build_view(
   return ViewRows(
     history=history,
     actuals=actuals,
-    rollups=fully_committed_rollups,
+    rollups=[],
     open=open_rows,
     future=future,
     footer=footer,
@@ -509,21 +527,8 @@ def print_ledger_view(days: int, project: int, filter: str | None = None) -> Non
 
   for r in _render_actual_rows(view.actuals):
     table.add_row(r[0], r[1], r[2], r[3], f"{r[4]:+,.2f}", _fmt_balance(r[5]), _fmt_balance(r[6]))
-  window_start = view.today - timedelta(days=view.days)
-  for rollup, _members in view.rollups:
-    # The rollup is the display unit (members are hidden): it renders when
-    # its date falls in the actuals window.
-    if not window_start <= date.fromisoformat(rollup.date) <= view.today:
-      continue
-    table.add_row(
-      rollup.id,
-      rollup.date,
-      rollup.description,
-      rollup.category,
-      f"{rollup.amount_eur:+,.2f}",
-      _fmt_balance(rollup.balance_checking),
-      _fmt_balance(rollup.balance_savings),
-    )
+  # Rollup rows are already seated inside view.actuals (at the last
+  # member's chain position) — nothing to place here anymore.
 
   if view.open:
     table.add_section()

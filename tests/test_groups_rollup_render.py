@@ -4,10 +4,12 @@ build_view already hid all members of fully-committed groups
 (hidden_committed), so both member and rollup vanished from `list` and
 the TUI while the ledger itself held the rows.
 
-The rollup is the display unit: the renderer places it where its rollup
-date falls (actuals window or, TUI-only, history) and must not gate on
-member presence. build_view itself is unchanged: members hidden, rollup
-handed over in `view.rollups`.
+The rollup is the display unit: build_view seats it into the actuals
+AT the chain position of the last member in chain order (the point
+where the total landed) — the renderer places nothing; whatever sits
+after it (e.g. Bankkosten committed after the members) renders below
+the rollup, exactly as the ledger orders it. The TUI's history band
+keeps its own pre-window rollup placement in view.rollups.
 """
 
 from datetime import date, timedelta
@@ -15,7 +17,7 @@ from datetime import date, timedelta
 from financials import groups as groups_mod
 from financials.commands import cmd_add
 from financials.journal import Journal
-from financials.ledger_view import build_view
+from financials.ledger_view import build_view, view_rows
 
 
 def _isolate(tmp_path, monkeypatch):
@@ -52,7 +54,7 @@ def test_fully_committed_group_rollup_renders_in_actuals(tmp_path, monkeypatch, 
 
   journal_path = _isolate(tmp_path, monkeypatch)
   _seed(journal_path)
-  _mutation, entry = cmd_add(
+  _mutation, _entry = cmd_add(
     date.today().isoformat(),
     "Winkel",
     "Uitgaven",
@@ -60,22 +62,24 @@ def test_fully_committed_group_rollup_renders_in_actuals(tmp_path, monkeypatch, 
     journal=Journal(journal_path),
   )
   groups_mod.create_group("Mastercard")
-  groups_mod.add_member("g0001", entry.id)
+  groups_mod.add_member("g0001", _entry.id)
 
-  # Data level: member hidden, rollup handed over with its balances.
+  # Data level: member hidden, rollup SEATED into the actuals after the
+  # Anker seed (the member's chain position); view.rollups is retired
+  # (placement moved into build_view — both renderers consume pre-seated).
   view = build_view(4, 30, None)
-  assert all(t.id != entry.id for t in view.actuals)
-  rollup, members = view.rollups[0]
+  member = next(t for t in view_rows() if t.id == _entry.id)
+  assert all(t.id != _entry.id for t in view.actuals)
+  assert [t.description for t in view.actuals] == ["Anker", "📁 Mastercard (1)"]
+  rollup = view.actuals[1]
   assert rollup.id == "g0001"
-  assert rollup.description == "📁 Mastercard (1)"
   assert rollup.amount_eur == -40.0
   assert rollup.date == date.today().isoformat()
-  assert [t.id for t in members] == [entry.id]
-  # Balances: the last member's — the rollup mirrors the member's own
-  # row (the total landed with it), so compare via the handed-over
-  # member row, not the journal mutation shape.
-  assert rollup.balance_checking == members[0].balance_checking
-  assert rollup.balance_savings == members[0].balance_savings
+  assert view.rollups == []
+  # Balances: the seat member's — the rollup mirrors the member's own row
+  # (the total landed with it).
+  assert rollup.balance_checking == member.balance_checking
+  assert rollup.balance_savings == member.balance_savings
 
   # Renderer level (the actual bug): the rollup row prints, the member
   # is collapsed away.
@@ -94,7 +98,7 @@ def test_fully_committed_group_rollup_older_than_window(tmp_path, monkeypatch):
   on the rollup date, not the members)."""
   journal_path = _isolate(tmp_path, monkeypatch)
   _seed(journal_path)
-  _mutation, entry = cmd_add(
+  _mutation, _entry = cmd_add(
     (date.today() - timedelta(days=10)).isoformat(),
     "Winkel",
     "Uitgaven",
@@ -102,14 +106,77 @@ def test_fully_committed_group_rollup_older_than_window(tmp_path, monkeypatch):
     journal=Journal(journal_path),
   )
   groups_mod.create_group("Mastercard")
-  groups_mod.add_member("g0001", entry.id)
+  groups_mod.add_member("g0001", _entry.id)
 
   view = build_view(4, 30, None)
-  # List: the rollup date is outside the actuals window — nothing new
-  # there (the anchor stays); the rollup lives in view.rollups only.
+  member = next(t for t in view_rows() if t.id == _entry.id)
+  # List: the rollup date is outside the actuals window — the rollup
+  # bands into history (the TUI's band), the list shows only the anchor.
   assert [t.description for t in view.actuals] == ["Anker"]
-  assert view.rollups[0][0].id == "g0001"
-  assert view.rollups[0][0].date == (date.today() - timedelta(days=10)).isoformat()
+  assert view.rollups == []
+  assert [t.description for t in view.history] == ["📁 Mastercard (1)"]
+  assert view.history[0].id == "g0001"
+  assert view.history[0].date == (date.today() - timedelta(days=10)).isoformat()
   # TUI band placement mirrors the renderer gates: history carries it.
   window_start = date.today() - timedelta(days=4)
-  assert date.fromisoformat(view.rollups[0][0].date) < window_start
+  assert date.fromisoformat(view.history[0].date) < window_start
+  # The seat member's balance: the total landed with it.
+  assert view.history[0].balance_checking == member.balance_checking
+
+
+def test_rollup_seat_respects_member_chain_position(tmp_path, monkeypatch, capsys):
+  """The owner's ordering report: a NON-member row (Bankkosten) committed
+  on the same date but chained AFTER the group's members must render
+  BELOW the rollup — the rollup takes the member's seat in the chain,
+  not the bottom of the list. Before the fix the rollup was appended
+  after all actuals, displaying an earlier chain balance under a later
+  balance and reading as if Bankkosten's balance were already stale."""
+  from financials.ledger_view import print_ledger_view
+
+  journal_path = _isolate(tmp_path, monkeypatch)
+  _seed(journal_path)
+  # Members committed first (chain positions 2..3), then the non-member
+  # (chain position 4) — same date, so chain order decides.
+  _m, member_a_journal = cmd_add(
+    date.today().isoformat(),
+    "Winkel",
+    "Uitgaven",
+    -20.0,
+    journal=Journal(journal_path),
+  )
+  _m, member_b_journal = cmd_add(
+    date.today().isoformat(),
+    "Cafe",
+    "Uitgaven",
+    -30.0,
+    journal=Journal(journal_path),
+  )
+  _m, after = cmd_add(
+    date.today().isoformat(),
+    "Bankkosten",
+    "Uitgaven",
+    -4.25,
+    journal=Journal(journal_path),
+  )
+  groups_mod.create_group("Mastercard")
+  groups_mod.add_member("g0001", member_a_journal.id, member_b_journal.id)
+
+  view = build_view(4, 30, None)
+  members = {t.id: t for t in view_rows()}
+  member_b = members[member_b_journal.id]
+  # Seat = last member's chain position; the seed + non-member frame it.
+  assert [t.description for t in view.actuals] == [
+    "Anker",
+    "📁 Mastercard (2)",
+    "Bankkosten",
+  ]
+  rollup = view.actuals[1]
+  assert rollup.id == "g0001"
+  assert rollup.amount_eur == -50.0
+  assert rollup.balance_checking == member_b.balance_checking
+
+  print_ledger_view(4, 30, None)
+  out = capsys.readouterr().out
+  # The 80-col capsys width truncates descriptions ("Bankkost…"), so
+  # assert on prefixes; the point is the ORDER (rollup above Bankkosten).
+  assert out.upper().index("MASTERCARD") < out.index("Bankkost")
