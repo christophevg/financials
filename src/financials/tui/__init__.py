@@ -337,10 +337,9 @@ class LedgerTUI(App[None]):
     history_rows: list[tuple] = [
       (t, t.balance_checking, t.balance_savings) for t in view.history
     ]
-    for rollup, members in view.rollups:
-      member_ids = {m.id for m in members}
-      if any(t.id in member_ids for t in view.actuals):
-        continue  # renders in/after the actuals window (list semantics)
+    for rollup, _members in view.rollups:
+      # Rollups dated before the actuals window band into history; the
+      # actuals gate below renders the rest (in the window only).
       if rollup.date < window_start:
         history_rows.append(
           (rollup, rollup.balance_checking, rollup.balance_savings)
@@ -356,9 +355,9 @@ class LedgerTUI(App[None]):
         style="",
         kind=KIND_COMMITTED,
       )
-    for rollup, members in view.rollups:
-      member_ids = {m.id for m in members}
-      if not any(t.id in member_ids for t in view.actuals):
+    for rollup, _members in view.rollups:
+      today = self._today or date.today()
+      if not window_start <= rollup.date <= today.isoformat():
         continue
       self._add_entry(
         table,

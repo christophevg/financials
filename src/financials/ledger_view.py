@@ -509,9 +509,11 @@ def print_ledger_view(days: int, project: int, filter: str | None = None) -> Non
 
   for r in _render_actual_rows(view.actuals):
     table.add_row(r[0], r[1], r[2], r[3], f"{r[4]:+,.2f}", _fmt_balance(r[5]), _fmt_balance(r[6]))
-  for rollup, members in view.rollups:
-    member_ids = {t.id for t in members}
-    if not any(t.id in member_ids for t in view.actuals):
+  window_start = view.today - timedelta(days=view.days)
+  for rollup, _members in view.rollups:
+    # The rollup is the display unit (members are hidden): it renders when
+    # its date falls in the actuals window.
+    if not window_start <= date.fromisoformat(rollup.date) <= view.today:
       continue
     table.add_row(
       rollup.id,
