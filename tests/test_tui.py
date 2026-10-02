@@ -30,6 +30,20 @@ from financials.tui.add import (
 TEST_TODAY = date(2026, 9, 28)
 
 
+def _pin_expected_today(monkeypatch) -> None:
+  """Pin the TODAY-clock of the EXPECTED store's future gate (expected.
+  add_expected reads its own module-global datetime.date) to TEST_TODAY:
+  both the AddScreen's future-dispatch check and add_expected's gate must
+  agree, or a save the screen accepts is refused by the gate (a literal
+  future date goes stale relative to the real clock)."""
+  FakeDate = type(
+    "FakeDate",
+    (date,),
+    {"today": classmethod(lambda cls: TEST_TODAY)},
+  )
+  monkeypatch.setattr("financials.expected.date", FakeDate)
+
+
 def _isolated(monkeypatch, tmp_path) -> Journal:
   """Point every store the TUI flow reads at tmp_path."""
   from financials import ledger_view as lv
@@ -398,6 +412,12 @@ def test_add_dialog_future_date_goes_to_expected(tmp_path, monkeypatch):
       await pilot.pause()
       screen = app.screen
       assert isinstance(screen, AddScreen)
+      # Pin add_expected's future gate to TEST_TODAY: the date below is NOT a
+      # rule instance (a computed date would drift out of the pinned
+      # projection horizon once the real clock advances ~3 months), and the
+      # gate must agree with the screen's own future-dispatch (pinned
+      # today), else the save the screen accepts is refused.
+      _pin_expected_today(monkeypatch)
       screen._fields["add-date"].value = "2026-10-01"
       screen._fields["add-description"].value = "Verjaardag"
       screen._fields["add-category"].value = "Uitgaven"

@@ -903,6 +903,22 @@ def _answers(monkeypatch, answers: list[str]):
   monkeypatch.setattr("rich.prompt.Prompt.ask", ask)
 
 
+def _pin_expected_today(monkeypatch) -> None:
+  """Pin the TODAY-clock of the EXPECTED store's future gate (expected.
+  add_expected reads its own module-global datetime.date) to the same
+  pinned date recurrence_cli.TODAY uses. Needed by occurrence-edit tests
+  whose instance dates are real rule instances (monthly day=1): the
+  literal 2026-10-01 only stays deterministically future under a pinned
+  clock, not relative to the real one (the gate started refusing once
+  the real date crossed it)."""
+  FakeDate = type(
+    "FakeDate",
+    (date,),
+    {"today": classmethod(lambda cls: date(2026, 9, 21))},
+  )
+  monkeypatch.setattr("financials.expected.date", FakeDate)
+
+
 def test_edit_rule_keeps_values_on_enter(monkeypatch):
   recurrence_cli.add_recurrence(
     description="Huur", category="Wonen", amount=-800.0, frequency="monthly", day=1
@@ -954,6 +970,9 @@ def test_edit_occurrence_option_2_creates_expected_exception(monkeypatch, tmp_pa
   # (keeps 2026-10-01), omschrijving Enter, amount -700, rest none —
   # category via the patched ask_category, no slot; frequency/day/month/
   # end are never asked.
+  # add_expected's future gate reads the real clock; pin it to the same
+  # pinned TODAY (2026-09-21) so the occurrence 2026-10-01 stays future.
+  _pin_expected_today(monkeypatch)
   _answers(monkeypatch, ["2", "", "", "-700"])
   assert recurrence_cli.edit_occurrence(instance_hash) == 0
   # expected entry created from the edited values
@@ -984,6 +1003,9 @@ def test_edit_occurrence_option_2_moves_the_datum(monkeypatch, capsys):
   # choice 2, then the slim loop: datum 2026-10-05, omschrijving Enter
   # (category via the patched ask_category, no slot; bedrag keeps via
   # repeated last answer "")
+  # add_expected's future gate reads the real clock; pin it to the same
+  # pinned TODAY (2026-09-21) so both dates stay deterministically future.
+  _pin_expected_today(monkeypatch)
   _answers(monkeypatch, ["2", "2026-10-05", ""])
   assert recurrence_cli.edit_occurrence(instance_hash) == 0
   expected_rows = load_expected()
@@ -1016,6 +1038,9 @@ def test_edit_occurrence_option_2_drops_dead_questions(monkeypatch, capsys):
       return "2"  # the occurrence-edit menu
     return kwargs.get("default", "")  # Enter everywhere → all values kept
 
+  # add_expected's future gate reads the real clock; pin it to the same
+  # pinned TODAY (2026-09-21) so the occurrence 2026-10-01 stays future.
+  _pin_expected_today(monkeypatch)
   monkeypatch.setattr("rich.prompt.Prompt.ask", counting_ask)
   assert recurrence_cli.edit_occurrence(instance_hash) == 0
   assert calls["n"] == 4
